@@ -318,6 +318,7 @@ See the [`examples/`](examples/) directory for more examples:
 - `counter.rs` - Simple counter actor
 - `gen_server_counter.rs` - GenServer (gen_server behavior) example
 - `turnstile.rs` - GenStatem DSL with Mermaid state diagram
+- `document_workflow.rs` - Complex FSM with approval workflow and revision cycle
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
