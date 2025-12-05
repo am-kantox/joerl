@@ -1,0 +1,22 @@
+[package]
+name = "joerl"
+version = "0.1.0"
+edition = "2025"
+authors = ["Aleksei Matiushkin <am@ambment.cat>"]
+description = "An Erlang-inspired actor model library for Rust"
+license = "MIT"
+keywords = ["actor", "erlang", "concurrent", "async", "tokio"]
+categories = ["asynchronous", "concurrency"]
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+thiserror = "1.0"
+tracing = "0.1"
+async-trait = "0.1"
+dashmap = "5.5"
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tracing-subscriber = "0.3"
+criterion = "0.5"
