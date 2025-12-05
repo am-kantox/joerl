@@ -402,6 +402,7 @@ dependencies = [
  "async-trait",
  "criterion",
  "dashmap",
+ "joerl_macro",
  "parking_lot",
  "serde",
  "serde_json",
@@ -411,6 +412,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "joerl_macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

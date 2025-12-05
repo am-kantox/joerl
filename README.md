@@ -10,6 +10,7 @@ An Erlang-inspired actor model library for Rust, named in tribute to [Joe Armstr
 
 - 🎭 **Actor Model**: Lightweight actors that communicate via message passing
 - 🤖 **GenServer**: Erlang's gen_server behavior with call/cast semantics
+- 🔄 **GenStatem DSL**: Mermaid-based state machine definition with compile-time validation
 - 🌳 **Supervision Trees**: Robust error handling with configurable restart strategies  
 - 🔗 **Links & Monitors**: Actor relationships for failure detection and propagation
 - 📬 **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
@@ -185,6 +186,96 @@ let value = counter.call(CounterCall::Get).await?;  // Synchronous
 counter.cast(CounterCast::Increment).await?;         // Asynchronous
 ```
 
+### GenStatem (Generic State Machine with DSL)
+
+For finite state machines, joerl provides a powerful DSL using Mermaid state diagrams with compile-time validation:
+
+```rust
+use joerl::{gen_statem, ActorSystem, ExitReason};
+use std::sync::Arc;
+
+#[gen_statem(fsm = r#"
+    [*] --> locked
+    locked --> |coin| unlocked
+    locked --> |push| locked
+    unlocked --> |push| locked
+    unlocked --> |coin| unlocked
+    unlocked --> |off| [*]
+"#)]
+#[derive(Debug, Clone)]
+struct Turnstile {
+    donations: u32,
+    pushes: u32,
+}
+
+impl Turnstile {
+    /// Called on every state transition
+    fn on_transition(
+        &mut self,
+        event: TurnstileEvent,
+        state: TurnstileState,
+    ) -> TransitionResult {
+        match (state.clone(), event.clone()) {
+            (TurnstileState::Locked, TurnstileEvent::Coin) => {
+                self.donations += 1;
+                TransitionResult::Next(TurnstileState::Unlocked, self.clone())
+            }
+            (TurnstileState::Unlocked, TurnstileEvent::Push) => {
+                self.pushes += 1;
+                TransitionResult::Next(TurnstileState::Locked, self.clone())
+            }
+            (TurnstileState::Unlocked, TurnstileEvent::Off) => {
+                // FSM will auto-terminate on this transition
+                TransitionResult::Keep(self.clone())
+            }
+            _ => TransitionResult::Keep(self.clone()),
+        }
+    }
+
+    /// Called when entering a new state
+    fn on_enter(
+        &self,
+        old_state: &TurnstileState,
+        new_state: &TurnstileState,
+        _data: &TurnstileData,
+    ) {
+        println!("Transition: {:?} -> {:?}", old_state, new_state);
+    }
+
+    /// Called on termination
+    fn on_terminate(
+        &self,
+        reason: &ExitReason,
+        state: &TurnstileState,
+        data: &TurnstileData,
+    ) {
+        println!("Terminated in {:?}: {:?}", state, reason);
+    }
+}
+
+// Usage
+let system = Arc::new(ActorSystem::new());
+let initial_data = Turnstile { donations: 0, pushes: 0 };
+let turnstile = Turnstile(&system, initial_data);
+
+turnstile.send(Box::new(TurnstileEvent::Coin)).await.unwrap();
+turnstile.send(Box::new(TurnstileEvent::Push)).await.unwrap();
+```
+
+**Features:**
+- **Mermaid Syntax**: Define FSM using standard Mermaid state diagram syntax
+- **Compile-Time Validation**: FSM structure validated at compile time
+- **Auto-Generated Types**: State and Event enums generated from the diagram
+- **Transition Validation**: Invalid transitions detected and logged at runtime
+- **Terminal States**: Automatic termination when reaching `[*]` end state
+- **Callbacks**: `on_transition`, `on_enter`, and `on_terminate` hooks
+
+The macro generates:
+- `{Name}State` enum with all states
+- `{Name}Event` enum with all events
+- `TransitionResult` enum for transition outcomes
+- Boilerplate Actor implementation with validation
+
 ### Trapping Exits
 
 Actors can trap exit signals to handle failures gracefully:
@@ -211,6 +302,7 @@ impl Actor for MyActor {
 | `gen_server:start_link/3` | `gen_server::spawn(&system, server)` | Spawn a gen_server |
 | `gen_server:call/2` | `server_ref.call(request)` | Synchronous call |
 | `gen_server:cast/2` | `server_ref.cast(message)` | Asynchronous cast |
+| `gen_statem:start_link/3` | `#[gen_statem(fsm = "...")]` | Define state machine with DSL |
 | `Pid` | `Pid` | Process identifier |
 | `!` (send) | `actor_ref.send(msg)` | Send a message |
 | `link/1` | `system.link(pid1, pid2)` | Link two actors |
@@ -225,6 +317,7 @@ See the [`examples/`](examples/) directory for more examples:
 
 - `counter.rs` - Simple counter actor
 - `gen_server_counter.rs` - GenServer (gen_server behavior) example
+- `turnstile.rs` - GenStatem DSL with Mermaid state diagram
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration

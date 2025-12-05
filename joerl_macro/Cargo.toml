@@ -1,0 +1,16 @@
+[package]
+name = "joerl_macro"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Procedural macros for joerl - Erlang-inspired actor model library"
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"

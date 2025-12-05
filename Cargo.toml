@@ -1,37 +1,10 @@
-[package]
-name = "joerl"
+[workspace]
+members = ["joerl", "joerl_macro"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 authors = ["Aleksei Matiushkin <am@ambment.cat>"]
-description = "An Erlang-inspired actor model library for Rust"
 license = "MIT"
 repository = "https://github.com/am-kantox/joerl"
-homepage = "https://github.com/am-kantox/joerl"
-readme = "README.md"
-keywords = ["actor", "erlang", "concurrent", "async", "tokio"]
-categories = ["asynchronous", "concurrency"]
-
-[dependencies]
-tokio = { version = "1.48", features = ["full"] }
-thiserror = "2.0"
-tracing = "0.1"
-async-trait = "0.1"
-dashmap = "6.1"
-parking_lot = "0.12"
-
-[dev-dependencies]
-tokio-test = "0.4"
-tracing-subscriber = "0.3"
-criterion = "0.8"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-uuid = { version = "1.19", features = ["v4", "serde"] }
-actix = "0.13"
-
-[[bench]]
-name = "benchmarks"
-harness = false
-
-[[bench]]
-name = "actix_comparison"
-harness = false

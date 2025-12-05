@@ -94,6 +94,12 @@ pub use pid::Pid;
 pub use supervisor::{RestartStrategy, Supervisor, SupervisorSpec};
 pub use system::{ActorRef, ActorSystem};
 
+// Re-export proc macros
+pub use joerl_macro::gen_statem;
+
+// Re-export dependencies used in generated code
+pub use async_trait;
+
 #[cfg(test)]
 mod tests {
     use super::*;
