@@ -3,7 +3,7 @@
 // This benchmark suite compares joerl (Erlang-inspired) with actix (production actor framework)
 // on equivalent operations to provide performance insights.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 // ============================================================================
@@ -11,8 +11,8 @@ use std::hint::black_box;
 // ============================================================================
 
 mod joerl_impl {
-    use joerl::{Actor, ActorContext, Message};
     use async_trait::async_trait;
+    use joerl::{Actor, ActorContext, Message};
 
     pub struct Counter {
         pub count: i32,
@@ -34,7 +34,7 @@ mod joerl_impl {
     #[async_trait]
     impl Actor for PingActor {
         async fn handle_message(&mut self, msg: Message, _ctx: &mut ActorContext) {
-            if let Some(_) = msg.downcast_ref::<usize>() {
+            if msg.downcast_ref::<usize>().is_some() {
                 self.count += 1;
             }
         }
@@ -42,7 +42,7 @@ mod joerl_impl {
 }
 
 // ============================================================================
-// actix implementations  
+// actix implementations
 // ============================================================================
 
 mod actix_impl {
@@ -96,7 +96,7 @@ mod actix_impl {
 fn bench_actor_spawn(c: &mut Criterion) {
     use actix::Actor as _; // Required for .start()
     let mut group = c.benchmark_group("actor_spawn");
-    
+
     // joerl
     group.bench_function("joerl", |b| {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -119,14 +119,14 @@ fn bench_actor_spawn(c: &mut Criterion) {
             });
         });
     });
-    
+
     group.finish();
 }
 
 fn bench_message_send(c: &mut Criterion) {
     use actix::Actor as _;
     let mut group = c.benchmark_group("message_send");
-    
+
     for count in [10, 100, 1000].iter() {
         // joerl
         group.bench_with_input(BenchmarkId::new("joerl", count), count, |b, &count| {
@@ -135,11 +135,11 @@ fn bench_message_send(c: &mut Criterion) {
                 rt.block_on(async {
                     let system = joerl::ActorSystem::new();
                     let actor = system.spawn(joerl_impl::Counter { count: 0 });
-                    
+
                     for _ in 0..count {
                         actor.send(Box::new(1i32)).await.unwrap();
                     }
-                    
+
                     tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
                     black_box(());
                 });
@@ -152,18 +152,18 @@ fn bench_message_send(c: &mut Criterion) {
                 let sys = actix::System::new();
                 sys.block_on(async {
                     let addr = actix_impl::Counter { count: 0 }.start();
-                    
+
                     for _ in 0..count {
                         addr.do_send(actix_impl::AddMsg(1));
                     }
-                    
+
                     tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
                     black_box(());
                 });
             });
         });
     }
-    
+
     group.finish();
 }
 
@@ -171,9 +171,9 @@ fn bench_actor_throughput(c: &mut Criterion) {
     use actix::Actor as _;
     let mut group = c.benchmark_group("throughput");
     group.sample_size(20); // Fewer samples for throughput tests
-    
+
     let message_count = 1000;
-    
+
     // joerl
     group.bench_function("joerl_1000_msgs", |b| {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -181,11 +181,11 @@ fn bench_actor_throughput(c: &mut Criterion) {
             rt.block_on(async {
                 let system = joerl::ActorSystem::new();
                 let actor = system.spawn(joerl_impl::PingActor { count: 0 });
-                
+
                 for _ in 0..message_count {
                     actor.send(Box::new(1usize)).await.unwrap();
                 }
-                
+
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 black_box(());
             });
@@ -198,24 +198,24 @@ fn bench_actor_throughput(c: &mut Criterion) {
             let sys = actix::System::new();
             sys.block_on(async {
                 let addr = actix_impl::PingActor { count: 0 }.start();
-                
+
                 for _ in 0..message_count {
                     addr.do_send(actix_impl::PingMsg(1));
                 }
-                
+
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 black_box(());
             });
         });
     });
-    
+
     group.finish();
 }
 
 fn bench_multiple_actors(c: &mut Criterion) {
     use actix::Actor as _;
     let mut group = c.benchmark_group("multiple_actors");
-    
+
     for count in [10, 50].iter() {
         // joerl
         group.bench_with_input(BenchmarkId::new("joerl", count), count, |b, &count| {
@@ -224,15 +224,15 @@ fn bench_multiple_actors(c: &mut Criterion) {
                 rt.block_on(async {
                     let system = joerl::ActorSystem::new();
                     let mut actors = Vec::new();
-                    
+
                     for _ in 0..count {
                         actors.push(system.spawn(joerl_impl::Counter { count: 0 }));
                     }
-                    
+
                     for actor in &actors {
                         actor.send(Box::new(1i32)).await.unwrap();
                     }
-                    
+
                     tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                     black_box(());
                 });
@@ -245,22 +245,22 @@ fn bench_multiple_actors(c: &mut Criterion) {
                 let sys = actix::System::new();
                 sys.block_on(async {
                     let mut addrs = Vec::new();
-                    
+
                     for _ in 0..count {
                         addrs.push(actix_impl::Counter { count: 0 }.start());
                     }
-                    
+
                     for addr in &addrs {
                         addr.do_send(actix_impl::AddMsg(1));
                     }
-                    
+
                     tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                     black_box(());
                 });
             });
         });
     }
-    
+
     group.finish();
 }
 

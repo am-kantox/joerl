@@ -1,9 +1,9 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use joerl::{Actor, ActorContext, ActorSystem, ExitReason, Message};
+use async_trait::async_trait;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use joerl::gen_server::{GenServer, GenServerContext};
 use joerl::gen_statem::{GenStatem, StateMachineContext, StateTransition};
 use joerl::supervisor::{ChildSpec, RestartStrategy, SupervisorSpec, spawn_supervisor};
-use async_trait::async_trait;
+use joerl::{Actor, ActorContext, ActorSystem, ExitReason, Message};
 use std::hint::black_box;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -36,10 +36,16 @@ impl Actor for Counter {
 struct CounterServer;
 
 #[derive(Debug)]
-enum CounterCall { Get, #[allow(dead_code)] Add(i32) }
+enum CounterCall {
+    Get,
+    #[allow(dead_code)]
+    Add(i32),
+}
 
 #[derive(Debug)]
-enum CounterCast { Increment }
+enum CounterCast {
+    Increment,
+}
 
 #[async_trait]
 impl GenServer for CounterServer {
@@ -102,7 +108,10 @@ impl GenStatem for TurnstileStatem {
     type Event = TurnstileEvent;
     type Reply = bool;
 
-    async fn init(&mut self, _ctx: &mut StateMachineContext<'_, Self>) -> (Self::State, Self::Data) {
+    async fn init(
+        &mut self,
+        _ctx: &mut StateMachineContext<'_, Self>,
+    ) -> (Self::State, Self::Data) {
         (TurnstileState::Locked, (0, 0))
     }
 
@@ -118,9 +127,7 @@ impl GenStatem for TurnstileStatem {
                 data.0 += 1;
                 StateTransition::next_state(TurnstileState::Unlocked, true)
             }
-            (TurnstileState::Locked, TurnstileEvent::Push) => {
-                StateTransition::keep_state(false)
-            }
+            (TurnstileState::Locked, TurnstileEvent::Push) => StateTransition::keep_state(false),
             (TurnstileState::Unlocked, TurnstileEvent::Coin) => {
                 data.0 += 1;
                 StateTransition::keep_state(true)
@@ -145,10 +152,10 @@ struct WorkerActor {
 #[async_trait]
 impl Actor for WorkerActor {
     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
-        if let Some(cmd) = msg.downcast_ref::<&str>() {
-            if *cmd == "crash" {
-                ctx.stop(ExitReason::Panic("crash".to_string()));
-            }
+        if let Some(cmd) = msg.downcast_ref::<&str>()
+            && *cmd == "crash"
+        {
+            ctx.stop(ExitReason::Panic("crash".to_string()));
         }
     }
 }
@@ -159,7 +166,7 @@ impl Actor for WorkerActor {
 
 fn bench_actor_spawn(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     c.bench_function("actor_spawn", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -174,18 +181,18 @@ fn bench_actor_spawn(c: &mut Criterion) {
 fn bench_actor_messages(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("actor_messages");
-    
+
     for count in [10, 100, 1000].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(count), count, |b, &count| {
             b.iter(|| {
                 rt.block_on(async {
                     let system = ActorSystem::new();
                     let actor = system.spawn(Counter { count: 0 });
-                    
+
                     for _ in 0..count {
                         actor.send(Box::new("increment")).await.unwrap();
                     }
-                    
+
                     tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                     black_box(());
                 });
@@ -197,17 +204,17 @@ fn bench_actor_messages(c: &mut Criterion) {
 
 fn bench_gen_server(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     c.bench_function("gen_server_calls", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let system = Arc::new(ActorSystem::new());
                 let server = joerl::gen_server::spawn(&system, CounterServer);
-                
+
                 for _ in 0..10 {
                     let _ = server.call(CounterCall::Get).await.unwrap();
                 }
-                
+
                 black_box(());
             });
         });
@@ -216,17 +223,17 @@ fn bench_gen_server(c: &mut Criterion) {
 
 fn bench_gen_server_casts(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     c.bench_function("gen_server_casts", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let system = Arc::new(ActorSystem::new());
                 let server = joerl::gen_server::spawn(&system, CounterServer);
-                
+
                 for _ in 0..10 {
                     server.cast(CounterCast::Increment).await.unwrap();
                 }
-                
+
                 tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                 black_box(());
             });
@@ -236,18 +243,18 @@ fn bench_gen_server_casts(c: &mut Criterion) {
 
 fn bench_gen_statem(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     c.bench_function("gen_statem_transitions", |b| {
         b.iter(|| {
             rt.block_on(async {
                 let system = Arc::new(ActorSystem::new());
                 let statem = joerl::gen_statem::spawn(&system, TurnstileStatem);
-                
+
                 for _ in 0..10 {
                     statem.call(TurnstileEvent::Coin).await.unwrap();
                     statem.call(TurnstileEvent::Push).await.unwrap();
                 }
-                
+
                 black_box(());
             });
         });
@@ -257,22 +264,21 @@ fn bench_gen_statem(c: &mut Criterion) {
 fn bench_supervisor(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("supervisor");
-    
+
     for count in [5, 10, 20].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(count), count, |b, &count| {
             b.iter(|| {
                 rt.block_on(async {
                     let system = Arc::new(ActorSystem::new());
                     let mut spec = SupervisorSpec::new(RestartStrategy::OneForOne);
-                    
+
                     for i in 0..count {
                         let id = i;
-                        spec = spec.child(ChildSpec::new(
-                            format!("worker_{}", id),
-                            move || Box::new(WorkerActor { id })
-                        ));
+                        spec = spec.child(ChildSpec::new(format!("worker_{}", id), move || {
+                            Box::new(WorkerActor { id })
+                        }));
                     }
-                    
+
                     let _sup = spawn_supervisor(&system, spec);
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                     black_box(());
