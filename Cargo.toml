@@ -26,7 +26,12 @@ criterion = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.19", features = ["v4", "serde"] }
+actix = "0.13"
 
 [[bench]]
 name = "benchmarks"
+harness = false
+
+[[bench]]
+name = "actix_comparison"
 harness = false
