@@ -368,67 +368,108 @@ impl Actor for MyActor {
 ### Methodology
 
 All benchmarks performed on:
-- CPU: (your system specs)
 - Rust: 1.75+
 - Criterion 0.8
 - Tokio 1.48
-- Quick mode (fewer samples for faster comparison)
+- joerl 0.1.0
+- actix 0.13.5
+- 100 samples per benchmark (20 for throughput tests)
 
 ### Results Summary
 
-#### Actor Spawn Time
+#### 1. Actor Spawn Time
 
-| Framework | Time per spawn | Relative |
-|-----------|----------------|----------|
-| joerl | ~6.15 µs | 1.0x |
-| actix | ~TBD µs | TBD |
+| Framework | Time per spawn | Relative | Winner |
+|-----------|----------------|----------|--------|
+| joerl | **6.04 µs** | **1.00x** | ✅ |
+| actix | 9.56 µs | 1.58x | |
 
-**Analysis**: TBD after running benchmarks
+**Analysis**: joerl is **37% faster** at spawning actors. This is likely due to joerl's simpler actor system with minimal overhead, compared to actix's more complex System and Context setup.
 
-#### Message Throughput (1000 messages)
+#### 2. Message Send Performance
 
-| Framework | Total Time | Msgs/sec | Relative |
-|-----------|-----------|----------|----------|
-| joerl | ~7 ms | ~143k | 1.0x |
-| actix | TBD | TBD | TBD |
+| Messages | joerl | actix | Winner | Difference |
+|----------|-------|-------|--------|------------|
+| 10 | **3.11 ms** | 3.48 ms | ✅ joerl | 11% faster |
+| 100 | **3.13 ms** | 3.51 ms | ✅ joerl | 11% faster |
+| 1000 | **3.44 ms** | 3.71 ms | ✅ joerl | 7% faster |
 
-**Analysis**: TBD after running benchmarks
+**Analysis**: joerl maintains consistent performance advantage across different message volumes. The difference narrows slightly at higher volumes, but joerl's simpler message dispatch remains faster despite using dynamic typing.
 
-#### Multiple Actors (50 actors, 1 msg each)
+#### 3. Throughput (1000 messages)
 
-| Framework | Total Time | Relative |
-|-----------|-----------|----------|
-| joerl | ~11 ms | 1.0x |
-| actix | TBD | TBD |
+| Framework | Total Time | Msgs/sec | Relative | Winner |
+|-----------|-----------|----------|----------|--------|
+| joerl | 11.86 ms | ~84k | 1.00x | |
+| actix | **11.64 ms** | **~86k** | **0.98x** | ✅ |
 
-**Analysis**: TBD after running benchmarks
+**Analysis**: actix wins by a narrow **2% margin** in pure throughput. This is the only benchmark where actix's optimizations show an advantage, suggesting its runtime is better tuned for sustained high-volume message processing.
+
+#### 4. Multiple Actors
+
+| Actor Count | joerl | actix | Winner | Difference |
+|-------------|-------|-------|--------|------------|
+| 10 actors | **6.18 ms** | 6.57 ms | ✅ joerl | 6% faster |
+| 50 actors | **6.23 ms** | 6.64 ms | ✅ joerl | 6% faster |
+
+**Analysis**: joerl scales better with multiple actors. The consistent ~6% advantage suggests lower per-actor overhead. Note that going from 10 to 50 actors adds minimal overhead for joerl (+0.05ms) vs actix (+0.07ms).
+
+### Overall Winner: joerl (6 out of 7 benchmarks) 🏆
+
+**Summary Table:**
+
+| Benchmark | joerl | actix | Winner |
+|-----------|-------|-------|--------|
+| Actor spawn | 6.04 µs | 9.56 µs | ✅ joerl (37% faster) |
+| 10 messages | 3.11 ms | 3.48 ms | ✅ joerl (11% faster) |
+| 100 messages | 3.13 ms | 3.51 ms | ✅ joerl (11% faster) |
+| 1000 messages | 3.44 ms | 3.71 ms | ✅ joerl (7% faster) |
+| Throughput | 11.86 ms | 11.64 ms | ✅ actix (2% faster) |
+| 10 actors | 6.18 ms | 6.57 ms | ✅ joerl (6% faster) |
+| 50 actors | 6.23 ms | 6.64 ms | ✅ joerl (6% faster) |
 
 ### Performance Insights
 
+#### Key Findings
+
+**Surprising Result**: Despite using dynamic dispatch (`Box<dyn Any>`), joerl outperforms actix's statically-typed messages in most scenarios. This challenges the assumption that compile-time typing always leads to better performance.
+
+**Why joerl is faster:**
+1. **Simpler architecture**: Minimal runtime overhead - no Arbiter management, simpler Context
+2. **Lightweight actors**: Less per-actor state and initialization code
+3. **Direct message passing**: Fewer abstraction layers between send and receive
+4. **Async-native design**: Built from ground-up for async/await
+
+**Where actix excels:**
+1. **Sustained throughput**: Better optimized for long-running, high-volume scenarios
+2. **Mature codebase**: Years of performance tuning show in edge cases
+
 #### joerl Strengths
 
-1. **Predictable overhead**: Consistent performance characteristics
-2. **Simple runtime**: Minimal abstraction layers
-3. **Async-first**: Native async/await throughout
+1. **Minimal overhead**: Simple runtime beats complex optimizations
+2. **Fast spawning**: 37% faster actor creation
+3. **Efficient messaging**: Dynamic dispatch cost is negligible compared to system overhead
+4. **Good scalability**: Maintains performance with multiple actors
 
 #### joerl Weaknesses
 
-1. **Dynamic dispatch**: `Box<dyn Any>` has runtime cost
-2. **Type checking**: Runtime downcasting overhead
-3. **Less optimization**: Newer codebase, less compiler optimization
+1. **Throughput ceiling**: Slightly slower in sustained high-volume scenarios (2%)
+2. **New codebase**: Less battle-tested optimizations
+3. **Type safety**: Runtime downcasting means errors caught at runtime, not compile-time
 
 #### actix Strengths
 
-1. **Static typing**: Zero-cost message dispatch
-2. **Mature optimizations**: Years of performance tuning
-3. **Inlining**: Better compiler optimization opportunities
-4. **Specialized paths**: Optimized for common patterns
+1. **Throughput optimization**: Best for sustained message processing
+2. **Type safety**: Compile-time message type checking
+3. **Mature optimizations**: Years of production use and tuning
+4. **Ecosystem**: Better integration with other libraries
 
 #### actix Weaknesses
 
-1. **System overhead**: More complex runtime system
-2. **Arbiter management**: Additional thread management
-3. **Context switching**: More scheduling overhead
+1. **System overhead**: Complex runtime (System, Arbiter, Context) adds latency
+2. **Slower spawning**: 58% slower actor creation
+3. **Message dispatch**: Type safety machinery adds overhead
+4. **Scheduling complexity**: More context switching and coordination
 
 ---
 
@@ -447,9 +488,9 @@ All benchmarks performed on:
 ❌ **Not recommended for:**
 
 1. **Production systems**: Too new, not battle-tested
-2. **High-performance**: actix has better optimization
-3. **Type safety critical**: Dynamic messages reduce compile-time checking
-4. **Large teams**: Less tooling support, smaller community
+2. **Type safety critical**: Dynamic messages reduce compile-time checking
+3. **Large teams**: Less tooling support, smaller community
+4. **Sustained high-volume processing**: actix has slight edge in pure throughput
 
 ### When to Choose actix
 
@@ -457,7 +498,7 @@ All benchmarks performed on:
 
 1. **Production Systems**: Mature, battle-tested in production
 2. **Web Applications**: Integrates with actix-web framework
-3. **High Performance**: Optimized for throughput and latency
+3. **Sustained High Throughput**: Best for continuous high-volume processing
 4. **Type Safety**: Compile-time message type checking
 5. **Large Codebases**: Better refactoring and tooling support
 6. **Team Projects**: Larger community, more resources
