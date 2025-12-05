@@ -18,7 +18,7 @@ tracing = "0.1"
 async-trait = "0.1"
 dashmap = "6.1"
 parking_lot = "0.12"
-joerl_macro = { path = "../joerl_macro" }
+joerl_macro = { version = "0.2.0" }
 
 [dev-dependencies]
 tokio-test = "0.4"
