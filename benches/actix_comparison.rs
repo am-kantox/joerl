@@ -5,14 +5,13 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
-use actix::Actor as _; // Required for .start() method
 
 // ============================================================================
 // joerl implementations
 // ============================================================================
 
 mod joerl_impl {
-    use joerl::{Actor, ActorContext, ActorSystem, Message};
+    use joerl::{Actor, ActorContext, Message};
     use async_trait::async_trait;
 
     pub struct Counter {
@@ -48,7 +47,6 @@ mod joerl_impl {
 
 mod actix_impl {
     use actix::prelude::*;
-    use actix::Actor as _;
 
     #[derive(Message)]
     #[rtype(result = "()")]
@@ -72,7 +70,7 @@ mod actix_impl {
 
     #[derive(Message)]
     #[rtype(result = "()")]
-    pub struct PingMsg(pub usize);
+    pub struct PingMsg(#[allow(dead_code)] pub usize);
 
     pub struct PingActor {
         pub count: usize,
@@ -96,6 +94,7 @@ mod actix_impl {
 // ============================================================================
 
 fn bench_actor_spawn(c: &mut Criterion) {
+    use actix::Actor as _; // Required for .start()
     let mut group = c.benchmark_group("actor_spawn");
     
     // joerl
@@ -125,6 +124,7 @@ fn bench_actor_spawn(c: &mut Criterion) {
 }
 
 fn bench_message_send(c: &mut Criterion) {
+    use actix::Actor as _;
     let mut group = c.benchmark_group("message_send");
     
     for count in [10, 100, 1000].iter() {
@@ -136,7 +136,7 @@ fn bench_message_send(c: &mut Criterion) {
                     let system = joerl::ActorSystem::new();
                     let actor = system.spawn(joerl_impl::Counter { count: 0 });
                     
-                    for i in 0..count {
+                    for _ in 0..count {
                         actor.send(Box::new(1i32)).await.unwrap();
                     }
                     
@@ -153,7 +153,7 @@ fn bench_message_send(c: &mut Criterion) {
                 sys.block_on(async {
                     let addr = actix_impl::Counter { count: 0 }.start();
                     
-                    for i in 0..count {
+                    for _ in 0..count {
                         addr.do_send(actix_impl::AddMsg(1));
                     }
                     
@@ -168,6 +168,7 @@ fn bench_message_send(c: &mut Criterion) {
 }
 
 fn bench_actor_throughput(c: &mut Criterion) {
+    use actix::Actor as _;
     let mut group = c.benchmark_group("throughput");
     group.sample_size(20); // Fewer samples for throughput tests
     
@@ -212,6 +213,7 @@ fn bench_actor_throughput(c: &mut Criterion) {
 }
 
 fn bench_multiple_actors(c: &mut Criterion) {
+    use actix::Actor as _;
     let mut group = c.benchmark_group("multiple_actors");
     
     for count in [10, 50].iter() {
