@@ -36,7 +36,7 @@ impl Actor for Counter {
 struct CounterServer;
 
 #[derive(Debug)]
-enum CounterCall { Get, Add(i32) }
+enum CounterCall { Get, #[allow(dead_code)] Add(i32) }
 
 #[derive(Debug)]
 enum CounterCast { Increment }
@@ -138,6 +138,7 @@ impl GenStatem for TurnstileStatem {
 // ============================================================================
 
 struct WorkerActor {
+    #[allow(dead_code)]
     id: usize,
 }
 
