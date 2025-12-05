@@ -131,7 +131,8 @@ pub struct Supervisor {
     strategy: RestartStrategy,
     intensity: RestartIntensity,
     children: HashMap<String, Child>,
-    child_order: Vec<String>, // Maintain insertion order
+    child_order: Vec<String>,            // Maintain insertion order
+    child_specs: Option<Vec<ChildSpec>>, // Stored until started
     system: Arc<ActorSystem>,
 }
 
@@ -143,12 +144,12 @@ impl Supervisor {
             intensity: spec.intensity,
             children: HashMap::new(),
             child_order: Vec::new(),
+            child_specs: Some(spec.children),
             system,
         }
     }
 
     /// Starts all children.
-    #[allow(dead_code)]
     fn start_children(&mut self, mut specs: Vec<ChildSpec>, ctx: &mut ActorContext) {
         for mut spec in specs.drain(..) {
             let child_actor = (spec.start)();
@@ -267,6 +268,11 @@ impl Actor for Supervisor {
     async fn started(&mut self, ctx: &mut ActorContext) {
         ctx.trap_exit(true);
         tracing::info!("Supervisor {} started", ctx.pid());
+
+        // Start all children
+        if let Some(specs) = self.child_specs.take() {
+            self.start_children(specs, ctx);
+        }
     }
 
     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {
@@ -299,14 +305,8 @@ impl Actor for Supervisor {
 }
 
 /// Helper function to spawn a supervisor.
-pub fn spawn_supervisor(system: &Arc<ActorSystem>, mut spec: SupervisorSpec) -> ActorRef {
-    let _children_specs = std::mem::take(&mut spec.children);
+pub fn spawn_supervisor(system: &Arc<ActorSystem>, spec: SupervisorSpec) -> ActorRef {
     let system_clone = Arc::clone(system);
-
-    // We need to start children after the supervisor is spawned
-    // This is a bit tricky - we'll do it via a message
-    // For now, we'll use a simpler approach
-
     system.spawn(Supervisor::from_spec(spec, system_clone))
 }
 
