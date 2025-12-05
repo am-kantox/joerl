@@ -5,6 +5,9 @@ edition = "2024"
 authors = ["Aleksei Matiushkin <am@ambment.cat>"]
 description = "An Erlang-inspired actor model library for Rust"
 license = "MIT"
+repository = "https://github.com/am-kantox/joerl"
+homepage = "https://github.com/am-kantox/joerl"
+readme = "README.md"
 keywords = ["actor", "erlang", "concurrent", "async", "tokio"]
 categories = ["asynchronous", "concurrency"]
 
