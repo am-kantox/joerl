@@ -7,9 +7,9 @@
 //! - Can send messages to other actors
 //! - Can link to and monitor other actors
 
+use crate::Pid;
 use crate::mailbox::Mailbox;
 use crate::message::{Envelope, ExitReason, Message, Signal};
-use crate::Pid;
 use async_trait::async_trait;
 
 /// Actor trait that must be implemented by all actors.
@@ -58,17 +58,21 @@ pub trait Actor: Send + 'static {
         match signal {
             Signal::Exit { from, reason } => {
                 if !ctx.is_trapping_exits() && !reason.is_normal() {
-                    tracing::warn!("Actor {} received EXIT from {}: {}", ctx.pid(), from, reason);
+                    tracing::warn!(
+                        "Actor {} received EXIT from {}: {}",
+                        ctx.pid(),
+                        from,
+                        reason
+                    );
                     ctx.stop(reason);
                 }
             }
-            Signal::Down { reference: _, pid, reason } => {
-                tracing::debug!(
-                    "Actor {} received DOWN for {}: {}",
-                    ctx.pid(),
-                    pid,
-                    reason
-                );
+            Signal::Down {
+                reference: _,
+                pid,
+                reason,
+            } => {
+                tracing::debug!("Actor {} received DOWN for {}: {}", ctx.pid(), pid, reason);
             }
             Signal::Stop => {
                 ctx.stop(ExitReason::Normal);
@@ -155,6 +159,7 @@ impl ActorContext {
     }
 
     /// Closes the actor's mailbox.
+    #[allow(dead_code)]
     pub(crate) fn close_mailbox(&mut self) {
         self.mailbox.close();
     }
@@ -163,7 +168,7 @@ impl ActorContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mailbox::{Mailbox, DEFAULT_MAILBOX_CAPACITY};
+    use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox};
 
     struct TestActor {
         messages_received: usize,

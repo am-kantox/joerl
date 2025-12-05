@@ -29,14 +29,15 @@ impl Mailbox {
     /// Receives the next message from the mailbox.
     ///
     /// Returns `None` if all senders have been dropped.
-    pub async fn recv(&mut self) -> Option<Envelope> {
+    pub(crate) async fn recv(&mut self) -> Option<Envelope> {
         self.rx.recv().await
     }
 
     /// Tries to receive a message without blocking.
     ///
     /// Returns `Ok(envelope)` if a message is available, `Err(TryRecvError)` otherwise.
-    pub fn try_recv(&mut self) -> Result<Envelope, mpsc::error::TryRecvError> {
+    #[allow(dead_code)]
+    pub(crate) fn try_recv(&mut self) -> Result<Envelope, mpsc::error::TryRecvError> {
         self.rx.try_recv()
     }
 
@@ -56,14 +57,20 @@ impl MailboxSender {
     /// Sends a message to the mailbox.
     ///
     /// Returns an error if the mailbox is full or closed.
-    pub async fn send(&self, envelope: Envelope) -> Result<(), mpsc::error::SendError<Envelope>> {
+    pub(crate) async fn send(
+        &self,
+        envelope: Envelope,
+    ) -> Result<(), mpsc::error::SendError<Envelope>> {
         self.tx.send(envelope).await
     }
 
     /// Tries to send a message without blocking.
     ///
     /// Returns an error if the mailbox is full or closed.
-    pub fn try_send(&self, envelope: Envelope) -> Result<(), mpsc::error::TrySendError<Envelope>> {
+    pub(crate) fn try_send(
+        &self,
+        envelope: Envelope,
+    ) -> Result<(), mpsc::error::TrySendError<Envelope>> {
         self.tx.try_send(envelope)
     }
 
@@ -97,10 +104,7 @@ mod tests {
     async fn test_mailbox_send_recv() {
         let (mut mailbox, sender) = Mailbox::new(10);
 
-        sender
-            .send(Envelope::signal(Signal::Stop))
-            .await
-            .unwrap();
+        sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
 
         let envelope = mailbox.recv().await;
         assert!(envelope.is_some());
@@ -113,10 +117,7 @@ mod tests {
         // Should be empty initially
         assert!(mailbox.try_recv().is_err());
 
-        sender
-            .send(Envelope::signal(Signal::Stop))
-            .await
-            .unwrap();
+        sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
 
         // Should have a message now
         let envelope = mailbox.try_recv();
@@ -128,14 +129,8 @@ mod tests {
         let (mut mailbox, sender) = Mailbox::new(2);
 
         // Fill the mailbox
-        sender
-            .send(Envelope::signal(Signal::Stop))
-            .await
-            .unwrap();
-        sender
-            .send(Envelope::signal(Signal::Stop))
-            .await
-            .unwrap();
+        sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
+        sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
 
         // Should fail due to capacity
         let result = sender.try_send(Envelope::signal(Signal::Stop));
@@ -185,14 +180,8 @@ mod tests {
         let (mut mailbox, sender) = Mailbox::new(10);
         let sender2 = sender.clone();
 
-        sender
-            .send(Envelope::signal(Signal::Stop))
-            .await
-            .unwrap();
-        sender2
-            .send(Envelope::signal(Signal::Stop))
-            .await
-            .unwrap();
+        sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
+        sender2.send(Envelope::signal(Signal::Stop)).await.unwrap();
 
         assert!(mailbox.recv().await.is_some());
         assert!(mailbox.recv().await.is_some());

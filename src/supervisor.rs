@@ -4,10 +4,10 @@
 //! configurable strategies when they fail. This implements the
 //! Erlang/OTP supervisor behavior.
 
+use crate::Pid;
 use crate::actor::{Actor, ActorContext};
 use crate::message::{ExitReason, Message, Signal};
 use crate::system::{ActorRef, ActorSystem};
-use crate::Pid;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -64,7 +64,10 @@ pub struct ChildSpec {
 
 impl ChildSpec {
     /// Creates a new child specification.
-    pub fn new(id: impl Into<String>, start: impl FnMut() -> Box<dyn Actor> + Send + 'static) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        start: impl FnMut() -> Box<dyn Actor> + Send + 'static,
+    ) -> Self {
         Self {
             id: id.into(),
             start: Box::new(start),
@@ -109,6 +112,7 @@ impl SupervisorSpec {
 
 /// Internal child state.
 struct Child {
+    #[allow(dead_code)]
     id: String,
     pid: Pid,
     start_factory: Box<dyn FnMut() -> Box<dyn Actor> + Send>,
@@ -144,6 +148,7 @@ impl Supervisor {
     }
 
     /// Starts all children.
+    #[allow(dead_code)]
     fn start_children(&mut self, mut specs: Vec<ChildSpec>, ctx: &mut ActorContext) {
         for mut spec in specs.drain(..) {
             let child_actor = (spec.start)();
@@ -166,7 +171,12 @@ impl Supervisor {
     }
 
     /// Restarts a child according to the strategy.
-    async fn handle_child_exit(&mut self, child_pid: Pid, reason: &ExitReason, ctx: &mut ActorContext) {
+    async fn handle_child_exit(
+        &mut self,
+        child_pid: Pid,
+        reason: &ExitReason,
+        ctx: &mut ActorContext,
+    ) {
         // Find which child exited
         let child_id = self
             .children
@@ -175,12 +185,7 @@ impl Supervisor {
             .map(|(id, _)| id.clone());
 
         if let Some(child_id) = child_id {
-            tracing::warn!(
-                "Child {} (pid {}) exited: {}",
-                child_id,
-                child_pid,
-                reason
-            );
+            tracing::warn!("Child {} (pid {}) exited: {}", child_id, child_pid, reason);
 
             if reason.is_normal() {
                 // Normal exit, don't restart
@@ -223,7 +228,7 @@ impl Supervisor {
 
             child.restart_times.push(now);
 
-            // Spawn new child  
+            // Spawn new child
             let child_actor = (child.start_factory)();
             let actor_ref = self.system.spawn_boxed(child_actor);
             let new_pid = actor_ref.pid();
@@ -294,20 +299,15 @@ impl Actor for Supervisor {
 }
 
 /// Helper function to spawn a supervisor.
-pub fn spawn_supervisor(
-    system: &Arc<ActorSystem>,
-    mut spec: SupervisorSpec,
-) -> ActorRef {
+pub fn spawn_supervisor(system: &Arc<ActorSystem>, mut spec: SupervisorSpec) -> ActorRef {
     let _children_specs = std::mem::take(&mut spec.children);
     let system_clone = Arc::clone(system);
-    
-    let actor_ref = system.spawn(Supervisor::from_spec(spec, system_clone));
-    
+
     // We need to start children after the supervisor is spawned
     // This is a bit tricky - we'll do it via a message
     // For now, we'll use a simpler approach
-    
-    actor_ref
+
+    system.spawn(Supervisor::from_spec(spec, system_clone))
 }
 
 #[cfg(test)]
@@ -329,11 +329,10 @@ mod tests {
 
     #[test]
     fn test_supervisor_spec() {
-        let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
-            .intensity(RestartIntensity {
-                max_restarts: 5,
-                within_seconds: 10,
-            });
+        let spec = SupervisorSpec::new(RestartStrategy::OneForOne).intensity(RestartIntensity {
+            max_restarts: 5,
+            within_seconds: 10,
+        });
 
         assert_eq!(spec.strategy, RestartStrategy::OneForOne);
         assert_eq!(spec.intensity.max_restarts, 5);

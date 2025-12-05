@@ -42,6 +42,7 @@ impl Pid {
     }
 
     /// Creates a Pid with a specific node and id (primarily for testing and remote actors).
+    #[cfg(test)]
     pub(crate) fn with_node(node: u32, id: u64) -> Self {
         Self { node, id }
     }

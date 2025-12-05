@@ -19,10 +19,7 @@ pub type Message = Box<dyn Any + Send + 'static>;
 pub enum Signal {
     /// EXIT signal sent when a linked actor terminates.
     /// In Erlang: {'EXIT', FromPid, Reason}
-    Exit {
-        from: Pid,
-        reason: ExitReason,
-    },
+    Exit { from: Pid, reason: ExitReason },
 
     /// DOWN signal sent to monitoring actors when monitored actor terminates.
     /// In Erlang: {'DOWN', MonitorRef, process, Pid, Reason}

@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 use joerl::{Actor, ActorContext, ActorSystem, ExitReason, Message, Signal};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::time::{Duration, sleep};
 
 struct CountingActor {
     counter: Arc<AtomicUsize>,
@@ -13,7 +13,7 @@ struct CountingActor {
 #[async_trait]
 impl Actor for CountingActor {
     async fn handle_message(&mut self, msg: Message, _ctx: &mut ActorContext) {
-        if let Some(_) = msg.downcast_ref::<()>() {
+        if msg.downcast_ref::<()>().is_some() {
             self.counter.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -23,7 +23,7 @@ impl Actor for CountingActor {
 async fn test_actor_processes_messages() {
     let system = ActorSystem::new();
     let counter = Arc::new(AtomicUsize::new(0));
-    
+
     let actor = system.spawn(CountingActor {
         counter: Arc::clone(&counter),
     });
@@ -38,6 +38,7 @@ async fn test_actor_processes_messages() {
 }
 
 struct ExitActor {
+    #[allow(dead_code)]
     should_panic: bool,
 }
 
@@ -57,7 +58,9 @@ impl Actor for ExitActor {
 #[tokio::test]
 async fn test_actor_exit_normal() {
     let system = ActorSystem::new();
-    let actor = system.spawn(ExitActor { should_panic: false });
+    let actor = system.spawn(ExitActor {
+        should_panic: false,
+    });
     let pid = actor.pid();
 
     actor.send(Box::new("exit_normal")).await.unwrap();
@@ -69,7 +72,7 @@ async fn test_actor_exit_normal() {
 #[tokio::test]
 async fn test_actor_link_propagates_failure() {
     let system = ActorSystem::new();
-    
+
     struct LinkedActor {
         exit_received: Arc<AtomicUsize>,
     }
@@ -90,7 +93,7 @@ async fn test_actor_link_propagates_failure() {
     }
 
     let exit_counter = Arc::new(AtomicUsize::new(0));
-    
+
     let actor1 = system.spawn(ExitActor { should_panic: true });
     let actor2 = system.spawn(LinkedActor {
         exit_received: Arc::clone(&exit_counter),
@@ -100,10 +103,7 @@ async fn test_actor_link_propagates_failure() {
     system.link(actor1.pid(), actor2.pid()).unwrap();
 
     // Make actor1 exit abnormally
-    actor1
-        .send(Box::new("exit_panic"))
-        .await
-        .unwrap();
+    actor1.send(Box::new("exit_panic")).await.unwrap();
 
     sleep(Duration::from_millis(100)).await;
 
@@ -141,10 +141,7 @@ async fn test_actor_monitor() {
     actor1.monitor(actor2.pid()).unwrap();
 
     // Make actor1 exit
-    actor1
-        .send(Box::new("exit_normal"))
-        .await
-        .unwrap();
+    actor1.send(Box::new("exit_normal")).await.unwrap();
 
     sleep(Duration::from_millis(100)).await;
 
@@ -203,10 +200,10 @@ async fn test_actor_lifecycle_hooks() {
         }
 
         async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
-            if let Some(cmd) = msg.downcast_ref::<&str>() {
-                if *cmd == "stop" {
-                    ctx.stop(ExitReason::Normal);
-                }
+            if let Some(cmd) = msg.downcast_ref::<&str>()
+                && *cmd == "stop"
+            {
+                ctx.stop(ExitReason::Normal);
             }
         }
     }
@@ -238,9 +235,7 @@ async fn test_multiple_actors_concurrently() {
     }
 
     // Spawn multiple actors and verify they all start
-    let actors: Vec<_> = (0..10)
-        .map(|_| system.spawn(SimpleActor))
-        .collect();
+    let actors: Vec<_> = (0..10).map(|_| system.spawn(SimpleActor)).collect();
 
     sleep(Duration::from_millis(50)).await;
 

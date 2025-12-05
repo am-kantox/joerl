@@ -5,6 +5,7 @@
 use async_trait::async_trait;
 use joerl::{Actor, ActorContext, ActorSystem, Message, Pid};
 
+#[allow(dead_code)]
 enum PingPongMessage {
     Ping(Pid, usize),
     Pong(Pid, usize),
@@ -25,13 +26,18 @@ impl Actor for PingActor {
         if let Some(msg) = msg.downcast_ref::<PingPongMessage>() {
             match msg {
                 PingPongMessage::Pong(from, count) => {
-                    println!("[PING {}] Received pong #{} from {}", ctx.pid(), count, from);
-                    
+                    println!(
+                        "[PING {}] Received pong #{} from {}",
+                        ctx.pid(),
+                        count,
+                        from
+                    );
+
                     if *count < self.max_rounds {
                         // Send ping back
                         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                         println!("[PING {}] Sending ping #{}", ctx.pid(), count + 1);
-                        
+
                         // In a real system, we'd store the ActorRef, but for this example
                         // we'll demonstrate the concept
                     } else {
@@ -66,8 +72,13 @@ impl Actor for PongActor {
         if let Some(msg) = msg.downcast_ref::<PingPongMessage>() {
             match msg {
                 PingPongMessage::Ping(from, count) => {
-                    println!("[PONG {}] Received ping #{} from {}", ctx.pid(), count, from);
-                    
+                    println!(
+                        "[PONG {}] Received ping #{} from {}",
+                        ctx.pid(),
+                        count,
+                        from
+                    );
+
                     if *count < self.max_rounds {
                         // Send pong back
                         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -95,7 +106,7 @@ async fn main() {
     println!("=== Ping-Pong Actor Example ===\n");
 
     let system = ActorSystem::new();
-    
+
     let ping = system.spawn(PingActor { max_rounds: 5 });
     let pong = system.spawn(PongActor { max_rounds: 5 });
 

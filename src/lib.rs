@@ -128,17 +128,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_link_failure() {
-        use tokio::time::{sleep, Duration};
+        use tokio::time::{Duration, sleep};
 
         struct FailingActor;
 
         #[async_trait]
         impl Actor for FailingActor {
             async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
-                if let Some(cmd) = msg.downcast_ref::<&str>() {
-                    if *cmd == "die" {
-                        ctx.stop(ExitReason::Panic("intentional".to_string()));
-                    }
+                if let Some(cmd) = msg.downcast_ref::<&str>()
+                    && *cmd == "die"
+                {
+                    ctx.stop(ExitReason::Panic("intentional".to_string()));
                 }
             }
         }
@@ -155,10 +155,10 @@ mod tests {
             }
 
             async fn handle_signal(&mut self, signal: Signal, _ctx: &mut ActorContext) {
-                if let Signal::Exit { from, .. } = signal {
-                    if Some(from) == self.monitored {
-                        self.received_exit = true;
-                    }
+                if let Signal::Exit { from, .. } = signal
+                    && Some(from) == self.monitored
+                {
+                    self.received_exit = true;
                 }
             }
 

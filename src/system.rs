@@ -6,15 +6,15 @@
 //! - Routing messages between actors
 //! - Managing actor lifecycle (links, monitors)
 
+use crate::Pid;
 use crate::actor::{Actor, ActorContext};
 use crate::error::{ActorError, Result};
-use crate::mailbox::{Mailbox, MailboxSender, DEFAULT_MAILBOX_CAPACITY};
+use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox, MailboxSender};
 use crate::message::{Envelope, ExitReason, Message, MonitorRef, Signal};
-use crate::Pid;
 use dashmap::DashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::task::JoinHandle;
 
 static MONITOR_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -77,9 +77,9 @@ impl ActorRef {
     /// Waits for the actor to terminate and returns the exit reason.
     pub async fn join(mut self) -> ExitReason {
         if let Some(handle) = self.join_handle.take() {
-            handle.await.unwrap_or(ExitReason::Panic(
-                "Actor task panicked".to_string(),
-            ))
+            handle
+                .await
+                .unwrap_or(ExitReason::Panic("Actor task panicked".to_string()))
         } else {
             ExitReason::Normal
         }
@@ -137,29 +137,19 @@ impl ActorSystem {
     /// let actor_ref = system.spawn(MyActor);
     /// # }
     /// ```
-    pub fn spawn<A: Actor>(
-        self: &Arc<Self>,
-        actor: A,
-    ) -> ActorRef {
+    pub fn spawn<A: Actor>(self: &Arc<Self>, actor: A) -> ActorRef {
         self.spawn_with_capacity(actor, DEFAULT_MAILBOX_CAPACITY)
     }
 
     /// Spawns a boxed actor with default mailbox capacity.
     ///
     /// This is useful for spawning trait objects.
-    pub fn spawn_boxed(
-        self: &Arc<Self>,
-        actor: Box<dyn Actor>,
-    ) -> ActorRef {
+    pub fn spawn_boxed(self: &Arc<Self>, actor: Box<dyn Actor>) -> ActorRef {
         self.spawn_boxed_with_capacity(actor, DEFAULT_MAILBOX_CAPACITY)
     }
 
     /// Spawns a new actor with a specific mailbox capacity.
-    pub fn spawn_with_capacity<A: Actor>(
-        self: &Arc<Self>,
-        actor: A,
-        capacity: usize,
-    ) -> ActorRef {
+    pub fn spawn_with_capacity<A: Actor>(self: &Arc<Self>, actor: A, capacity: usize) -> ActorRef {
         self.spawn_internal(Box::new(actor), capacity)
     }
 
@@ -173,11 +163,7 @@ impl ActorSystem {
     }
 
     /// Internal spawn implementation.
-    fn spawn_internal(
-        self: &Arc<Self>,
-        mut actor: Box<dyn Actor>,
-        capacity: usize,
-    ) -> ActorRef {
+    fn spawn_internal(self: &Arc<Self>, mut actor: Box<dyn Actor>, capacity: usize) -> ActorRef {
         let pid = Pid::new();
         let (mailbox, sender) = Mailbox::new(capacity);
         let mut ctx = ActorContext::new(pid, mailbox);
@@ -345,7 +331,6 @@ impl ActorSystem {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
