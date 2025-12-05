@@ -160,12 +160,42 @@ See the [`examples/`](examples/) directory for more examples:
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
+- `remote_actors.rs` - Distributed actors conceptual foundation
+- `distributed_chat.rs` - Multi-node chat system over TCP
 
 Run examples with:
 
 ```bash
 cargo run --example counter
 ```
+
+### Distributed Actors Examples
+
+The `remote_actors` example demonstrates the conceptual foundation for distributed systems:
+
+```bash
+cargo run --example remote_actors
+```
+
+This shows how multiple actor systems (nodes) can communicate through serializable messages, simulating the distributed nature of Erlang/OTP.
+
+The `distributed_chat` example demonstrates a real distributed chat system using TCP:
+
+```bash
+# Terminal 1 - Start first node
+cargo run --example distributed_chat -- --node alice --port 8001
+
+# Terminal 2 - Start second node and connect to first
+cargo run --example distributed_chat -- --node bob --port 8002 --connect 127.0.0.1:8001
+```
+
+This example shows:
+- TCP-based node-to-node communication
+- Message serialization with JSON
+- Connection management and routing
+- Location-transparent messaging patterns
+
+For detailed documentation on building distributed systems with joerl, see [DISTRIBUTED.md](DISTRIBUTED.md).
 
 ## Architecture
 
