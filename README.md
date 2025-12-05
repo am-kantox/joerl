@@ -9,6 +9,7 @@ An Erlang-inspired actor model library for Rust, named in tribute to [Joe Armstr
 ## Features
 
 - 🎭 **Actor Model**: Lightweight actors that communicate via message passing
+- 🤖 **GenServer**: Erlang's gen_server behavior with call/cast semantics
 - 🌳 **Supervision Trees**: Robust error handling with configurable restart strategies  
 - 🔗 **Links & Monitors**: Actor relationships for failure detection and propagation
 - 📬 **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
@@ -120,6 +121,70 @@ let supervisor = spawn_supervisor(&system, spec);
 - `OneForAll`: Restart all children when one fails
 - `RestForOne`: Restart the failed child and all children started after it
 
+### GenServer (Generic Server Behavior)
+
+For structured stateful actors with synchronous call/reply and asynchronous cast semantics:
+
+```rust
+use joerl::gen_server::{GenServer, GenServerContext};
+
+struct Counter;
+
+#[derive(Debug)]
+enum CounterCall {
+    Get,
+    Add(i32),
+}
+
+#[derive(Debug)]
+enum CounterCast {
+    Increment,
+}
+
+#[async_trait]
+impl GenServer for Counter {
+    type State = i32;
+    type Call = CounterCall;
+    type Cast = CounterCast;
+    type CallReply = i32;
+
+    async fn init(&mut self, _ctx: &mut GenServerContext<'_, Self>) -> Self::State {
+        0  // Initial state
+    }
+
+    async fn handle_call(
+        &mut self,
+        call: Self::Call,
+        state: &mut Self::State,
+        _ctx: &mut GenServerContext<'_, Self>,
+    ) -> Self::CallReply {
+        match call {
+            CounterCall::Get => *state,
+            CounterCall::Add(n) => {
+                *state += n;
+                *state
+            }
+        }
+    }
+
+    async fn handle_cast(
+        &mut self,
+        cast: Self::Cast,
+        state: &mut Self::State,
+        _ctx: &mut GenServerContext<'_, Self>,
+    ) {
+        match cast {
+            CounterCast::Increment => *state += 1,
+        }
+    }
+}
+
+// Usage
+let counter = gen_server::spawn(&system, Counter);
+let value = counter.call(CounterCall::Get).await?;  // Synchronous
+counter.cast(CounterCast::Increment).await?;         // Asynchronous
+```
+
 ### Trapping Exits
 
 Actors can trap exit signals to handle failures gracefully:
@@ -140,10 +205,12 @@ impl Actor for MyActor {
 ```
 
 ## Erlang Terminology Mapping
-
-| Erlang | joerl | Description |
+|| Erlang | joerl | Description |
 |--------|-------|-------------|
 | `spawn/1` | `system.spawn(actor)` | Spawn a new actor |
+| `gen_server:start_link/3` | `gen_server::spawn(&system, server)` | Spawn a gen_server |
+| `gen_server:call/2` | `server_ref.call(request)` | Synchronous call |
+| `gen_server:cast/2` | `server_ref.cast(message)` | Asynchronous cast |
 | `Pid` | `Pid` | Process identifier |
 | `!` (send) | `actor_ref.send(msg)` | Send a message |
 | `link/1` | `system.link(pid1, pid2)` | Link two actors |
@@ -157,6 +224,7 @@ impl Actor for MyActor {
 See the [`examples/`](examples/) directory for more examples:
 
 - `counter.rs` - Simple counter actor
+- `gen_server_counter.rs` - GenServer (gen_server behavior) example
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration

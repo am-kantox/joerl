@@ -1,0 +1,392 @@
+//! Generic server behavior inspired by Erlang's `gen_server`.
+//!
+//! This module provides a higher-level abstraction for building actors with
+//! synchronous call/reply and asynchronous cast semantics, mirroring Erlang/OTP's
+//! gen_server behavior.
+//!
+//! ## Erlang/OTP Comparison
+//!
+//! In Erlang, gen_server provides a client-server pattern with callbacks:
+//!
+//! ```erlang
+//! -module(counter).
+//! -behaviour(gen_server).
+//!
+//! init([]) -> {ok, 0}.
+//!
+//! handle_call(get, _From, State) ->
+//!     {reply, State, State};
+//! handle_call({add, N}, _From, State) ->
+//!     {reply, ok, State + N}.
+//!
+//! handle_cast({increment}, State) ->
+//!     {noreply, State + 1}.
+//! ```
+//!
+//! In joerl, the equivalent looks like:
+//!
+//! ```rust
+//! use joerl::gen_server::{GenServer, GenServerContext};
+//! use async_trait::async_trait;
+//!
+//! struct Counter;
+//!
+//! #[derive(Debug)]
+//! enum CounterCall {
+//!     Get,
+//!     Add(i32),
+//! }
+//!
+//! #[derive(Debug)]
+//! enum CounterCast {
+//!     Increment,
+//! }
+//!
+//! #[async_trait]
+//! impl GenServer for Counter {
+//!     type State = i32;
+//!     type Call = CounterCall;
+//!     type Cast = CounterCast;
+//!     type CallReply = i32;
+//!
+//!     async fn init(&mut self, _ctx: &mut GenServerContext<'_, Self>) -> Self::State {
+//!         0
+//!     }
+//!
+//!     async fn handle_call(
+//!         &mut self,
+//!         call: Self::Call,
+//!         state: &mut Self::State,
+//!         _ctx: &mut GenServerContext<'_, Self>,
+//!     ) -> Self::CallReply {
+//!         match call {
+//!             CounterCall::Get => *state,
+//!             CounterCall::Add(n) => {
+//!                 *state += n;
+//!                 *state
+//!             }
+//!         }
+//!     }
+//!
+//!     async fn handle_cast(
+//!         &mut self,
+//!         cast: Self::Cast,
+//!         state: &mut Self::State,
+//!         _ctx: &mut GenServerContext<'_, Self>,
+//!     ) {
+//!         match cast {
+//!             CounterCast::Increment => *state += 1,
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! ## Key Differences from Raw Actors
+//!
+//! - **Type Safety**: Call and Cast messages are strongly typed
+//! - **Synchronous Calls**: `call()` waits for a response from the server
+//! - **State Management**: Explicit state type and lifecycle
+//! - **Cleaner API**: Separates synchronous calls from asynchronous casts
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use joerl::{ActorSystem, gen_server};
+//!
+//! # use async_trait::async_trait;
+//! # struct Counter;
+//! # #[derive(Debug)]
+//! # enum CounterCall { Get }
+//! # #[derive(Debug)]
+//! # enum CounterCast { Increment }
+//! # #[async_trait]
+//! # impl gen_server::GenServer for Counter {
+//! #     type State = i32;
+//! #     type Call = CounterCall;
+//! #     type Cast = CounterCast;
+//! #     type CallReply = i32;
+//! #     async fn init(&mut self, _ctx: &mut gen_server::GenServerContext<'_, Self>) -> Self::State { 0 }
+//! #     async fn handle_call(&mut self, call: Self::Call, state: &mut Self::State, _ctx: &mut gen_server::GenServerContext<'_, Self>) -> Self::CallReply { *state }
+//! #     async fn handle_cast(&mut self, _cast: Self::Cast, state: &mut Self::State, _ctx: &mut gen_server::GenServerContext<'_, Self>) { *state += 1; }
+//! # }
+//! # async fn example() {
+//! let system = ActorSystem::new();
+//! let counter = gen_server::spawn(&system, Counter);
+//!
+//! // Synchronous call - waits for response
+//! let value = counter.call(CounterCall::Get).await.unwrap();
+//!
+//! // Asynchronous cast - fire and forget
+//! counter.cast(CounterCast::Increment).await.unwrap();
+//! # }
+//! ```
+
+use crate::{
+    actor::{Actor, ActorContext},
+    error::{ActorError, Result},
+    message::{ExitReason, Message},
+    pid::Pid,
+    system::{ActorRef, ActorSystem},
+};
+use async_trait::async_trait;
+use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::sync::Arc;
+use tokio::sync::oneshot;
+
+/// The GenServer trait defines callbacks for the generic server behavior.
+///
+/// This trait is inspired by Erlang's gen_server behavior and provides
+/// a structured way to build stateful actors with call/cast semantics.
+///
+/// ## Type Parameters
+///
+/// - `State`: The internal state type of the server
+/// - `Call`: The type of synchronous call requests
+/// - `Cast`: The type of asynchronous cast messages
+/// - `CallReply`: The type returned from synchronous calls
+#[async_trait]
+pub trait GenServer: Send + 'static {
+    /// The internal state type
+    type State: Send + 'static;
+
+    /// The synchronous call request type
+    type Call: Send + Debug + 'static;
+
+    /// The asynchronous cast message type
+    type Cast: Send + Debug + 'static;
+
+    /// The reply type for synchronous calls
+    type CallReply: Send + 'static;
+
+    /// Initialize the server state.
+    ///
+    /// Called when the server starts, before processing any messages.
+    ///
+    /// In Erlang: `init/1`
+    async fn init(&mut self, ctx: &mut GenServerContext<'_, Self>) -> Self::State;
+
+    /// Handle synchronous call requests.
+    ///
+    /// This method is called when `GenServerRef::call()` is invoked.
+    /// The return value is sent back to the caller.
+    ///
+    /// In Erlang: `handle_call/3`
+    async fn handle_call(
+        &mut self,
+        call: Self::Call,
+        state: &mut Self::State,
+        ctx: &mut GenServerContext<'_, Self>,
+    ) -> Self::CallReply;
+
+    /// Handle asynchronous cast messages.
+    ///
+    /// This method is called when `GenServerRef::cast()` is invoked.
+    /// No reply is sent to the caller.
+    ///
+    /// In Erlang: `handle_cast/2`
+    async fn handle_cast(
+        &mut self,
+        cast: Self::Cast,
+        state: &mut Self::State,
+        ctx: &mut GenServerContext<'_, Self>,
+    );
+
+    /// Handle actor termination.
+    ///
+    /// Called when the server is about to stop. Use this for cleanup.
+    ///
+    /// In Erlang: `terminate/2`
+    async fn terminate(
+        &mut self,
+        _reason: &ExitReason,
+        _state: &mut Self::State,
+        _ctx: &mut GenServerContext<'_, Self>,
+    ) {
+        // Default: no-op
+    }
+
+    /// Handle generic messages (optional).
+    ///
+    /// Override this to handle messages that aren't Call or Cast.
+    ///
+    /// In Erlang: `handle_info/2`
+    async fn handle_info(
+        &mut self,
+        _msg: Message,
+        _state: &mut Self::State,
+        _ctx: &mut GenServerContext<'_, Self>,
+    ) {
+        // Default: ignore unknown messages
+    }
+}
+
+/// Context provided to GenServer callbacks.
+///
+/// Similar to Erlang's gen_server state, but provides access to the
+/// underlying actor context for advanced operations.
+pub struct GenServerContext<'a, G: GenServer + ?Sized> {
+    actor_ctx: &'a mut ActorContext,
+    _phantom: PhantomData<G>,
+}
+
+impl<'a, G: GenServer> GenServerContext<'a, G> {
+    fn new(actor_ctx: &'a mut ActorContext) -> Self {
+        Self {
+            actor_ctx,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Get the server's Pid
+    pub fn pid(&self) -> Pid {
+        self.actor_ctx.pid()
+    }
+
+    /// Stop the server with a reason
+    pub fn stop(&mut self, reason: ExitReason) {
+        self.actor_ctx.stop(reason);
+    }
+
+    /// Enable or disable exit signal trapping
+    pub fn trap_exit(&mut self, trap: bool) {
+        self.actor_ctx.trap_exit(trap);
+    }
+}
+
+/// Internal message types for GenServer
+enum GenServerMsg<G: GenServer> {
+    Call {
+        request: G::Call,
+        reply_tx: oneshot::Sender<G::CallReply>,
+    },
+    Cast {
+        message: G::Cast,
+    },
+    Info {
+        message: Message,
+    },
+}
+
+/// Internal actor implementation that wraps a GenServer
+struct GenServerActor<G: GenServer> {
+    server: G,
+    state: Option<G::State>,
+}
+
+impl<G: GenServer> GenServerActor<G> {
+    fn new(server: G) -> Self {
+        Self {
+            server,
+            state: None,
+        }
+    }
+}
+
+#[async_trait]
+impl<G: GenServer> Actor for GenServerActor<G> {
+    async fn started(&mut self, ctx: &mut ActorContext) {
+        let mut gen_ctx = GenServerContext::new(ctx);
+        let state = self.server.init(&mut gen_ctx).await;
+        self.state = Some(state);
+    }
+
+    async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+        let state = match self.state.as_mut() {
+            Some(s) => s,
+            None => return, // Not initialized yet
+        };
+
+        let mut gen_ctx = GenServerContext::new(ctx);
+
+        // Downcast to owned value
+        if let Ok(gen_msg) = msg.downcast::<GenServerMsg<G>>() {
+            match *gen_msg {
+                GenServerMsg::Call { request, reply_tx } => {
+                    let reply = self.server.handle_call(request, state, &mut gen_ctx).await;
+                    let _ = reply_tx.send(reply); // Ignore send errors (caller may have cancelled)
+                }
+                GenServerMsg::Cast { message } => {
+                    self.server.handle_cast(message, state, &mut gen_ctx).await;
+                }
+                GenServerMsg::Info { message } => {
+                    self.server.handle_info(message, state, &mut gen_ctx).await;
+                }
+            }
+        }
+    }
+
+    async fn stopped(&mut self, reason: &ExitReason, ctx: &mut ActorContext) {
+        if let Some(state) = self.state.as_mut() {
+            let mut gen_ctx = GenServerContext::new(ctx);
+            self.server.terminate(reason, state, &mut gen_ctx).await;
+        }
+    }
+}
+
+/// Handle to a spawned GenServer.
+///
+/// Provides `call()` and `cast()` methods for interacting with the server.
+pub struct GenServerRef<G: GenServer> {
+    actor_ref: ActorRef,
+    _phantom: PhantomData<G>,
+}
+
+impl<G: GenServer> GenServerRef<G> {
+    /// Get the server's Pid
+    pub fn pid(&self) -> Pid {
+        self.actor_ref.pid()
+    }
+
+    /// Make a synchronous call to the server.
+    ///
+    /// This sends a request and waits for a response.
+    ///
+    /// In Erlang: `gen_server:call/2`
+    pub async fn call(&self, request: G::Call) -> Result<G::CallReply> {
+        let (tx, rx) = oneshot::channel();
+
+        let msg: GenServerMsg<G> = GenServerMsg::Call {
+            request,
+            reply_tx: tx,
+        };
+
+        self.actor_ref.send(Box::new(msg)).await?;
+
+        rx.await
+            .map_err(|_| ActorError::ActorNotFound(self.actor_ref.pid()))
+    }
+
+    /// Send an asynchronous cast to the server.
+    ///
+    /// This sends a message without waiting for a response.
+    ///
+    /// In Erlang: `gen_server:cast/2`
+    pub async fn cast(&self, message: G::Cast) -> Result<()> {
+        let msg: GenServerMsg<G> = GenServerMsg::Cast { message };
+        self.actor_ref.send(Box::new(msg)).await
+    }
+
+    /// Send a generic info message to the server.
+    ///
+    /// In Erlang: `Pid ! Message`
+    pub async fn send_info(&self, message: Message) -> Result<()> {
+        let msg: GenServerMsg<G> = GenServerMsg::Info { message };
+        self.actor_ref.send(Box::new(msg)).await
+    }
+}
+
+/// Spawn a GenServer.
+///
+/// Creates and starts a new GenServer actor.
+///
+/// In Erlang: `gen_server:start_link/3`
+pub fn spawn<G: GenServer>(system: &Arc<ActorSystem>, server: G) -> GenServerRef<G> {
+    let actor = GenServerActor::new(server);
+    let actor_ref = system.spawn(actor);
+
+    GenServerRef {
+        actor_ref,
+        _phantom: PhantomData,
+    }
+}

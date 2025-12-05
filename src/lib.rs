@@ -72,10 +72,12 @@
 //! - [`message`]: Message types and signals
 //! - [`mailbox`]: Bounded mailbox implementation
 //! - [`supervisor`]: Supervision trees and restart strategies
+//! - [`gen_server`]: Generic server behavior (Erlang's gen_server)
 //! - [`error`]: Error types and results
 
 pub mod actor;
 pub mod error;
+pub mod gen_server;
 pub mod mailbox;
 pub mod message;
 pub mod pid;
