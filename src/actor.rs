@@ -118,6 +118,28 @@ impl ActorContext {
     }
 
     /// Returns the Pid of this actor.
+    ///
+    /// The Pid uniquely identifies this actor in the system and can be
+    /// used to send messages or establish links/monitors.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct MyActor;
+    ///
+    /// #[async_trait]
+    /// impl Actor for MyActor {
+    ///     async fn started(&mut self, ctx: &mut ActorContext) {
+    ///         let my_pid = ctx.pid();
+    ///         println!("My PID is: {}", my_pid);
+    ///     }
+    ///     
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    /// ```
     pub fn pid(&self) -> Pid {
         self.pid
     }
@@ -132,12 +154,72 @@ impl ActorContext {
 
     /// Sets whether to trap exit signals.
     ///
+    /// When trapping exits, EXIT signals from linked actors are delivered
+    /// to `handle_signal` instead of causing the actor to terminate.
+    /// This allows actors to handle failures gracefully.
+    ///
     /// In Erlang: `process_flag(trap_exit, true)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message, Signal, ExitReason};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Supervisor;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Supervisor {
+    ///     async fn started(&mut self, ctx: &mut ActorContext) {
+    ///         // Enable exit trapping to handle child failures
+    ///         ctx.trap_exit(true);
+    ///     }
+    ///
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    ///
+    ///     async fn handle_signal(&mut self, signal: Signal, _ctx: &mut ActorContext) {
+    ///         if let Signal::Exit { from, reason } = signal {
+    ///             println!("Child {} exited: {}", from, reason);
+    ///             // Handle the failure instead of dying
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub fn trap_exit(&mut self, trap: bool) {
         self.trap_exit = trap;
     }
 
     /// Stops the actor with the given reason.
+    ///
+    /// Calling this method marks the actor for termination. The actor will
+    /// finish processing the current message, then its `stopped` hook will
+    /// be called before the actor terminates.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - The reason for stopping, which will be sent to linked actors
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message, ExitReason};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+    ///         if let Some(cmd) = msg.downcast_ref::<&str>() {
+    ///             if *cmd == "shutdown" {
+    ///                 ctx.stop(ExitReason::Normal);
+    ///             } else if *cmd == "panic" {
+    ///                 ctx.stop(ExitReason::Panic("Something went wrong".into()));
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub fn stop(&mut self, reason: ExitReason) {
         self.should_stop = true;
         self.stop_reason = Some(reason);

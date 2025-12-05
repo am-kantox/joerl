@@ -4,9 +4,42 @@ use crate::Pid;
 use thiserror::Error;
 
 /// Result type for actor operations.
+///
+/// This is a type alias for `std::result::Result<T, ActorError>` that makes
+/// error handling more ergonomic throughout the library.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::{ActorError, Result, Pid};
+///
+/// fn check_actor_alive(pid: Pid, alive: bool) -> Result<()> {
+///     if alive {
+///         Ok(())
+///     } else {
+///         Err(ActorError::ActorNotFound(pid))
+///     }
+/// }
+/// ```
 pub type Result<T> = std::result::Result<T, ActorError>;
 
 /// Errors that can occur in the actor system.
+///
+/// This enum covers all possible errors that can occur during actor operations.
+/// All variants implement `Display` and `Error` through the `thiserror` crate.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::{ActorError, Pid};
+///
+/// let pid = Pid::new();
+/// let error = ActorError::ActorNotFound(pid);
+/// assert_eq!(error.to_string(), format!("Actor {} not found", pid));
+///
+/// let timeout = ActorError::Timeout;
+/// assert_eq!(timeout.to_string(), "Operation timed out");
+/// ```
 #[derive(Error, Debug, Clone)]
 pub enum ActorError {
     /// Actor with the given Pid does not exist or has terminated.
@@ -51,7 +84,22 @@ pub enum ActorError {
 }
 
 impl ActorError {
-    /// Creates a new error from a string message.
+    /// Creates a new generic error from a string message.
+    ///
+    /// This is a convenience method for creating ad-hoc errors when
+    /// none of the predefined variants fit.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::ActorError;
+    ///
+    /// let error = ActorError::other("custom error message");
+    /// assert_eq!(error.to_string(), "Actor error: custom error message");
+    ///
+    /// // Works with String or &str
+    /// let error2 = ActorError::other(String::from("another error"));
+    /// ```
     pub fn other(msg: impl Into<String>) -> Self {
         Self::Other(msg.into())
     }

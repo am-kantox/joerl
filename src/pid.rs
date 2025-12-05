@@ -48,16 +48,51 @@ impl Pid {
     }
 
     /// Returns true if this Pid represents a local actor.
+    ///
+    /// Local actors have node ID 0. This is useful for distributed
+    /// systems where actors may exist on different nodes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::Pid;
+    ///
+    /// let local_pid = Pid::new();
+    /// assert!(local_pid.is_local());
+    /// ```
     pub fn is_local(&self) -> bool {
         self.node == 0
     }
 
     /// Returns the node identifier.
+    ///
+    /// Node IDs are used in distributed systems. Local actors have node ID 0.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::Pid;
+    ///
+    /// let pid = Pid::new();
+    /// assert_eq!(pid.node(), 0); // Local node
+    /// ```
     pub fn node(&self) -> u32 {
         self.node
     }
 
-    /// Returns the process identifier.
+    /// Returns the unique process identifier within this node.
+    ///
+    /// Each actor gets a unique, monotonically increasing ID.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::Pid;
+    ///
+    /// let pid1 = Pid::new();
+    /// let pid2 = Pid::new();
+    /// assert!(pid2.id() > pid1.id());
+    /// ```
     pub fn id(&self) -> u64 {
         self.id
     }
