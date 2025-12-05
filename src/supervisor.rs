@@ -3,6 +3,48 @@
 //! Supervisors monitor child actors and restart them according to
 //! configurable strategies when they fail. This implements the
 //! Erlang/OTP supervisor behavior.
+//!
+//! # Overview
+//!
+//! Supervisors are special actors that monitor their children and restart them
+//! when they fail. This provides fault tolerance by automatically recovering
+//! from errors without human intervention.
+//!
+//! # Restart Strategies
+//!
+//! - **OneForOne**: Only the failed child is restarted
+//! - **OneForAll**: All children are restarted when one fails
+//! - **RestForOne**: The failed child and all children started after it are restarted
+//!
+//! # Example
+//!
+//! ```rust
+//! use joerl::{
+//!     Actor, ActorContext, ActorSystem, Message,
+//!     supervisor::{ChildSpec, RestartStrategy, SupervisorSpec, spawn_supervisor},
+//! };
+//! use async_trait::async_trait;
+//! use std::sync::Arc;
+//!
+//! struct Worker { id: String }
+//!
+//! #[async_trait]
+//! impl Actor for Worker {
+//!     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {
+//!         // Worker logic here
+//!     }
+//! }
+//!
+//! # tokio_test::block_on(async {
+//! let system = Arc::new(ActorSystem::new());
+//!
+//! let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
+//!     .child(ChildSpec::new("worker1", || Box::new(Worker { id: "1".into() })))
+//!     .child(ChildSpec::new("worker2", || Box::new(Worker { id: "2".into() })));
+//!
+//! let supervisor = spawn_supervisor(&system, spec);
+//! # });
+//! ```
 
 use crate::Pid;
 use crate::actor::{Actor, ActorContext};
@@ -15,26 +57,74 @@ use std::time::{Duration, Instant};
 
 /// Restart strategy for supervised actors.
 ///
-/// These strategies mirror Erlang/OTP supervisor strategies.
+/// These strategies mirror Erlang/OTP supervisor strategies and determine
+/// which children should be restarted when a child terminates abnormally.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::supervisor::RestartStrategy;
+///
+/// let strategy = RestartStrategy::OneForOne;
+/// assert_eq!(strategy, RestartStrategy::OneForOne);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartStrategy {
     /// Restart only the failed child (default).
+    ///
+    /// This is the most common strategy. When a child terminates abnormally,
+    /// only that child is restarted. Other children continue running normally.
+    ///
+    /// **Use when**: Children are independent and don't depend on each other.
     ///
     /// In Erlang: `one_for_one`
     OneForOne,
 
     /// Restart all children when one fails.
     ///
+    /// When any child terminates abnormally, all children are terminated
+    /// and then all are restarted. This ensures a consistent state across
+    /// all children.
+    ///
+    /// **Use when**: Children are tightly coupled and must maintain consistency.
+    ///
     /// In Erlang: `one_for_all`
     OneForAll,
 
     /// Restart the failed child and all children started after it.
+    ///
+    /// When a child terminates abnormally, that child and all children that
+    /// were started after it (in the child list order) are terminated and
+    /// restarted. Children started before the failed child continue running.
+    ///
+    /// **Use when**: Children have dependencies where later children depend on earlier ones.
     ///
     /// In Erlang: `rest_for_one`
     RestForOne,
 }
 
 /// Restart intensity limits to prevent infinite restart loops.
+///
+/// The supervisor will terminate itself if a child is restarted more than
+/// `max_restarts` times within `within_seconds` seconds. This prevents
+/// resource exhaustion from repeatedly failing children.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::supervisor::RestartIntensity;
+///
+/// // Default: 3 restarts within 5 seconds
+/// let default = RestartIntensity::default();
+/// assert_eq!(default.max_restarts, 3);
+/// assert_eq!(default.within_seconds, 5);
+///
+/// // Custom: more permissive
+/// let custom = RestartIntensity {
+///     max_restarts: 10,
+///     within_seconds: 60,
+/// };
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct RestartIntensity {
     /// Maximum number of restarts within the time period.
@@ -44,6 +134,20 @@ pub struct RestartIntensity {
 }
 
 impl Default for RestartIntensity {
+    /// Creates default restart intensity limits.
+    ///
+    /// Default is 3 restarts within 5 seconds, which is a reasonable
+    /// balance for most applications.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::supervisor::RestartIntensity;
+    ///
+    /// let intensity = RestartIntensity::default();
+    /// assert_eq!(intensity.max_restarts, 3);
+    /// assert_eq!(intensity.within_seconds, 5);
+    /// ```
     fn default() -> Self {
         Self {
             max_restarts: 3,
@@ -54,7 +158,27 @@ impl Default for RestartIntensity {
 
 /// Child specification for supervised actors.
 ///
+/// A child spec describes how to start a child actor. The `start` function
+/// is a factory that creates a new instance of the actor each time it needs
+/// to be started or restarted.
+///
 /// In Erlang: child_spec()
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::{Actor, ActorContext, Message, supervisor::ChildSpec};
+/// use async_trait::async_trait;
+///
+/// struct MyWorker;
+///
+/// #[async_trait]
+/// impl Actor for MyWorker {
+///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+/// }
+///
+/// let spec = ChildSpec::new("my_worker", || Box::new(MyWorker));
+/// ```
 pub struct ChildSpec {
     /// Unique identifier for the child.
     pub id: String,
@@ -64,6 +188,28 @@ pub struct ChildSpec {
 
 impl ChildSpec {
     /// Creates a new child specification.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - A unique identifier for the child within this supervisor
+    /// * `start` - A factory function that creates a new actor instance
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message, supervisor::ChildSpec};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Counter { count: i32 }
+    ///
+    /// #[async_trait]
+    /// impl Actor for Counter {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// // Factory function creates a fresh instance each time
+    /// let spec = ChildSpec::new("counter", || Box::new(Counter { count: 0 }));
+    /// ```
     pub fn new(
         id: impl Into<String>,
         start: impl FnMut() -> Box<dyn Actor> + Send + 'static,
@@ -77,7 +223,35 @@ impl ChildSpec {
 
 /// Supervisor specification.
 ///
+/// Describes how a supervisor should behave, including its restart strategy,
+/// restart intensity limits, and the children it should supervise.
+///
 /// In Erlang: supervisor:init/1 return value
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::{
+///     Actor, ActorContext, Message,
+///     supervisor::{ChildSpec, RestartIntensity, RestartStrategy, SupervisorSpec},
+/// };
+/// use async_trait::async_trait;
+///
+/// struct Worker;
+///
+/// #[async_trait]
+/// impl Actor for Worker {
+///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+/// }
+///
+/// let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
+///     .intensity(RestartIntensity {
+///         max_restarts: 5,
+///         within_seconds: 10,
+///     })
+///     .child(ChildSpec::new("worker1", || Box::new(Worker)))
+///     .child(ChildSpec::new("worker2", || Box::new(Worker)));
+/// ```
 pub struct SupervisorSpec {
     /// Restart strategy.
     pub strategy: RestartStrategy,
@@ -88,7 +262,25 @@ pub struct SupervisorSpec {
 }
 
 impl SupervisorSpec {
-    /// Creates a new supervisor specification.
+    /// Creates a new supervisor specification with the given restart strategy.
+    ///
+    /// The supervisor starts with default restart intensity (3 restarts within 5 seconds)
+    /// and no children. Use the builder methods [`child`](Self::child) and
+    /// [`intensity`](Self::intensity) to configure it further.
+    ///
+    /// # Arguments
+    ///
+    /// * `strategy` - The restart strategy to use (OneForOne, OneForAll, or RestForOne)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::supervisor::{RestartStrategy, SupervisorSpec};
+    ///
+    /// let spec = SupervisorSpec::new(RestartStrategy::OneForOne);
+    /// assert_eq!(spec.strategy, RestartStrategy::OneForOne);
+    /// assert_eq!(spec.children.len(), 0);
+    /// ```
     pub fn new(strategy: RestartStrategy) -> Self {
         Self {
             strategy,
@@ -98,12 +290,64 @@ impl SupervisorSpec {
     }
 
     /// Adds a child to the supervisor.
+    ///
+    /// Children are started in the order they are added. For `RestForOne` strategy,
+    /// this order determines which children are restarted together.
+    ///
+    /// # Arguments
+    ///
+    /// * `spec` - The child specification
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{
+    ///     Actor, ActorContext, Message,
+    ///     supervisor::{ChildSpec, RestartStrategy, SupervisorSpec},
+    /// };
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker { id: String }
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
+    ///     .child(ChildSpec::new("worker1", || Box::new(Worker { id: "1".into() })))
+    ///     .child(ChildSpec::new("worker2", || Box::new(Worker { id: "2".into() })));
+    ///
+    /// assert_eq!(spec.children.len(), 2);
+    /// ```
     pub fn child(mut self, spec: ChildSpec) -> Self {
         self.children.push(spec);
         self
     }
 
-    /// Sets the restart intensity.
+    /// Sets the restart intensity limits.
+    ///
+    /// If a child exceeds these limits, the supervisor will terminate itself
+    /// rather than continuing to restart the failing child.
+    ///
+    /// # Arguments
+    ///
+    /// * `intensity` - The restart intensity limits
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::supervisor::{RestartIntensity, RestartStrategy, SupervisorSpec};
+    ///
+    /// // Allow more restarts for a less stable environment
+    /// let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
+    ///     .intensity(RestartIntensity {
+    ///         max_restarts: 10,
+    ///         within_seconds: 60,
+    ///     });
+    ///
+    /// assert_eq!(spec.intensity.max_restarts, 10);
+    /// ```
     pub fn intensity(mut self, intensity: RestartIntensity) -> Self {
         self.intensity = intensity;
         self
@@ -121,12 +365,18 @@ struct Child {
 
 /// Supervisor actor that monitors and restarts child actors.
 ///
-/// # Examples
+/// Supervisors are typically created using [`spawn_supervisor`] rather than
+/// being spawned directly. They automatically start their children when they
+/// are started and monitor them for failures.
 ///
-/// # Examples
+/// # Lifecycle
 ///
-/// Supervisors monitor and restart child actors according to strategies.
-/// See the module documentation for complete examples.
+/// 1. Supervisor is spawned with a [`SupervisorSpec`]
+/// 2. In `started()`, all children are spawned and monitored
+/// 3. When a child exits abnormally, supervisor applies its restart strategy
+/// 4. If restart intensity is exceeded, supervisor terminates
+///
+/// See the module documentation and examples for complete usage patterns.
 pub struct Supervisor {
     strategy: RestartStrategy,
     intensity: RestartIntensity,
@@ -138,6 +388,25 @@ pub struct Supervisor {
 
 impl Supervisor {
     /// Creates a new supervisor from a specification.
+    ///
+    /// This is typically called internally by [`spawn_supervisor`]. The supervisor
+    /// will start its children when its `started()` hook is called by the actor system.
+    ///
+    /// # Arguments
+    ///
+    /// * `spec` - The supervisor specification
+    /// * `system` - The actor system to spawn children in
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, supervisor::{RestartStrategy, SupervisorSpec, Supervisor}};
+    /// use std::sync::Arc;
+    ///
+    /// let system = Arc::new(ActorSystem::new());
+    /// let spec = SupervisorSpec::new(RestartStrategy::OneForOne);
+    /// let supervisor = Supervisor::from_spec(spec, Arc::clone(&system));
+    /// ```
     pub fn from_spec(spec: SupervisorSpec, system: Arc<ActorSystem>) -> Self {
         Self {
             strategy: spec.strategy,
@@ -304,7 +573,51 @@ impl Actor for Supervisor {
     }
 }
 
-/// Helper function to spawn a supervisor.
+/// Spawns a supervisor with the given specification.
+///
+/// This is the recommended way to create and start a supervisor. The supervisor
+/// will automatically start all its children when it is initialized.
+///
+/// # Arguments
+///
+/// * `system` - The actor system to spawn the supervisor in
+/// * `spec` - The supervisor specification defining behavior and children
+///
+/// # Returns
+///
+/// An [`ActorRef`] to the spawned supervisor
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::{
+///     Actor, ActorContext, ActorSystem, Message,
+///     supervisor::{ChildSpec, RestartStrategy, SupervisorSpec, spawn_supervisor},
+/// };
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+///
+/// struct Worker { id: String }
+///
+/// #[async_trait]
+/// impl Actor for Worker {
+///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+/// }
+///
+/// # tokio_test::block_on(async {
+/// let system = Arc::new(ActorSystem::new());
+///
+/// // Create supervisor with two workers
+/// let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
+///     .child(ChildSpec::new("worker1", || Box::new(Worker { id: "1".into() })))
+///     .child(ChildSpec::new("worker2", || Box::new(Worker { id: "2".into() })));
+///
+/// let supervisor = spawn_supervisor(&system, spec);
+///
+/// // Supervisor is now running and monitoring its children
+/// assert!(system.is_alive(supervisor.pid()));
+/// # });
+/// ```
 pub fn spawn_supervisor(system: &Arc<ActorSystem>, spec: SupervisorSpec) -> ActorRef {
     let system_clone = Arc::clone(system);
     system.spawn(Supervisor::from_spec(spec, system_clone))

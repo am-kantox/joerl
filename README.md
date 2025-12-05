@@ -158,7 +158,7 @@ See the [`examples/`](examples/) directory for more examples:
 
 - `counter.rs` - Simple counter actor
 - `ping_pong.rs` - Two actors communicating
-- `supervisor.rs` - Supervision tree example
+- `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
 
 Run examples with:
