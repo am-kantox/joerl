@@ -199,5 +199,175 @@ mod tests {
         let fsm = Fsm::parse(&lit).unwrap();
 
         assert!(fsm.terminal_states.contains("active"));
+        assert_eq!(
+            fsm.transitions
+                .get(&("active".to_string(), "stop".to_string())),
+            Some(&"[*]".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_with_state_diagram_declaration() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            stateDiagram-v2
+            [*] --> idle
+            idle --> |start| running
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+        assert_eq!(fsm.initial_state, Some("idle".to_string()));
+    }
+
+    #[test]
+    fn test_parse_with_comments() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            %% This is a comment
+            [*] --> start
+            %% Another comment
+            start --> |go| end
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+        assert_eq!(fsm.initial_state, Some("start".to_string()));
+    }
+
+    #[test]
+    fn test_parse_with_empty_lines() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> state1
+            
+            state1 --> |event| state2
+            
+            state2 --> |back| state1
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+        assert_eq!(fsm.states.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_multiple_transitions_same_state() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> idle
+            idle --> |event1| active
+            idle --> |event2| processing
+            idle --> |event3| done
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+        assert_eq!(fsm.states.len(), 4);
+        assert_eq!(fsm.events.len(), 3);
+        assert!(
+            fsm.transitions
+                .contains_key(&("idle".to_string(), "event1".to_string()))
+        );
+        assert!(
+            fsm.transitions
+                .contains_key(&("idle".to_string(), "event2".to_string()))
+        );
+        assert!(
+            fsm.transitions
+                .contains_key(&("idle".to_string(), "event3".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_self_transition() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> waiting
+            waiting --> |tick| waiting
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+        assert_eq!(
+            fsm.transitions
+                .get(&("waiting".to_string(), "tick".to_string())),
+            Some(&"waiting".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_event_with_special_chars() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> idle
+            idle --> |on!| active
+            active --> |off?| idle
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+        assert!(fsm.events.contains("on!"));
+        assert!(fsm.events.contains("off?"));
+    }
+
+    #[test]
+    fn test_error_no_initial_state() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            state1 --> |event| state2
+            "#
+        };
+
+        let result = Fsm::parse(&lit);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no initial state"));
+    }
+
+    #[test]
+    fn test_error_empty_fsm() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            "#
+        };
+
+        let result = Fsm::parse(&lit);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no states"));
+    }
+
+    #[test]
+    fn test_error_invalid_transition_syntax() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> start
+            start --> |incomplete
+            "#
+        };
+
+        let result = Fsm::parse(&lit);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_complex_fsm() {
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> created
+            created --> |submit| pending
+            pending --> |approve| approved
+            pending --> |reject| rejected
+            approved --> |publish| published
+            rejected --> |resubmit| pending
+            published --> |archive| [*]
+            "#
+        };
+
+        let fsm = Fsm::parse(&lit).unwrap();
+
+        assert_eq!(fsm.initial_state, Some("created".to_string()));
+        assert_eq!(fsm.states.len(), 5);
+        assert!(fsm.terminal_states.contains("published"));
+        assert_eq!(fsm.events.len(), 6);
     }
 }

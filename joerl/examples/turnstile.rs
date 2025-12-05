@@ -28,35 +28,39 @@ struct Turnstile {
 
 impl Turnstile {
     /// Called on every state transition
-    fn on_transition(&mut self, event: TurnstileEvent, state: TurnstileState) -> TransitionResult {
+    fn on_transition(
+        &mut self,
+        event: TurnstileEvent,
+        state: TurnstileState,
+    ) -> TurnstileTransitionResult {
         match (state.clone(), event.clone()) {
             (TurnstileState::Locked, TurnstileEvent::Push) => {
                 println!("⚡ Electrocuting person trying to push locked turnstile!");
                 self.pushes += 1;
-                TransitionResult::Keep(self.clone())
+                TurnstileTransitionResult::Keep(self.clone())
             }
             (TurnstileState::Locked, TurnstileEvent::Coin) => {
                 println!("💰 Coin inserted, unlocking turnstile");
                 self.donations += 1;
-                TransitionResult::Next(TurnstileState::Unlocked, self.clone())
+                TurnstileTransitionResult::Next(TurnstileState::Unlocked, self.clone())
             }
             (TurnstileState::Unlocked, TurnstileEvent::Push) => {
                 println!("🚶 Person passed through, locking turnstile");
                 self.pushes += 1;
-                TransitionResult::Next(TurnstileState::Locked, self.clone())
+                TurnstileTransitionResult::Next(TurnstileState::Locked, self.clone())
             }
             (TurnstileState::Unlocked, TurnstileEvent::Coin) => {
                 println!("🎁 Thanks! This donation will go to the animal shelter");
                 self.donations += 1;
-                TransitionResult::Keep(self.clone())
+                TurnstileTransitionResult::Keep(self.clone())
             }
             (TurnstileState::Unlocked, TurnstileEvent::Off) => {
                 println!("🔌 Shutting down turnstile");
                 // FSM specifies unlocked->off->[*], so we stay in Unlocked
                 // but the macro will detect this is a terminal transition
-                TransitionResult::Keep(self.clone())
+                TurnstileTransitionResult::Keep(self.clone())
             }
-            _ => TransitionResult::Error(format!(
+            _ => TurnstileTransitionResult::Error(format!(
                 "Invalid transition: {:?} with event {:?}",
                 state, event
             )),

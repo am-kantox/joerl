@@ -214,21 +214,21 @@ impl Turnstile {
         &mut self,
         event: TurnstileEvent,
         state: TurnstileState,
-    ) -> TransitionResult {
+    ) -> TurnstileTransitionResult {
         match (state.clone(), event.clone()) {
             (TurnstileState::Locked, TurnstileEvent::Coin) => {
                 self.donations += 1;
-                TransitionResult::Next(TurnstileState::Unlocked, self.clone())
+                TurnstileTransitionResult::Next(TurnstileState::Unlocked, self.clone())
             }
             (TurnstileState::Unlocked, TurnstileEvent::Push) => {
                 self.pushes += 1;
-                TransitionResult::Next(TurnstileState::Locked, self.clone())
+                TurnstileTransitionResult::Next(TurnstileState::Locked, self.clone())
             }
             (TurnstileState::Unlocked, TurnstileEvent::Off) => {
                 // FSM will auto-terminate on this transition
-                TransitionResult::Keep(self.clone())
+                TurnstileTransitionResult::Keep(self.clone())
             }
-            _ => TransitionResult::Keep(self.clone()),
+            _ => TurnstileTransitionResult::Keep(self.clone()),
         }
     }
 

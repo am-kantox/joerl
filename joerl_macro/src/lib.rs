@@ -184,6 +184,17 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
     let initial_state_var = syn::Ident::new(&to_pascal_case(initial_state), struct_name.span());
 
     let actor_struct_name = syn::Ident::new(&format!("{}Actor", struct_name), struct_name.span());
+    let result_enum_name = syn::Ident::new(
+        &format!("{}TransitionResult", struct_name),
+        struct_name.span(),
+    );
+
+    // Generate terminal check logic (handle empty case)
+    let terminal_check = if terminal_transition_checks.is_empty() {
+        quote! { false }
+    } else {
+        quote! { matches!((&state, &event), #(#terminal_transition_checks)|*) }
+    };
 
     // Generate the complete implementation
     let generated = quote! {
@@ -205,9 +216,9 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
         // Data type (alias to original struct)
         #vis type #data_type_name = #struct_name;
 
-        // Transition result
+        // Transition result (namespaced by struct name)
         #[derive(Debug)]
-        #vis enum TransitionResult {
+        #vis enum #result_enum_name {
             Next(#state_enum_name, #data_type_name),
             Keep(#data_type_name),
             Error(String),
@@ -251,7 +262,7 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
                     let result = data.on_transition(event.clone(), state.clone());
 
                     match result {
-                        TransitionResult::Next(new_state, new_data) => {
+                        #result_enum_name::Next(new_state, new_data) => {
                             // Validate transition
                             let expected = match (&state, &event) {
                                 #(#transition_checks)*
@@ -279,7 +290,7 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
                             new_data.on_enter(&state, &new_state, &new_data);
 
                             // Check if this was a terminal transition (to [*])
-                            let is_terminal = matches!((&state, &event), #(#terminal_transition_checks)|*);
+                            let is_terminal = #terminal_check;
 
                             if is_terminal {
                                 // Call on_terminate before stopping
@@ -290,9 +301,9 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
                             self.state = Some(new_state);
                             self.data = Some(new_data);
                         }
-                        TransitionResult::Keep(kept_data) => {
+                        #result_enum_name::Keep(kept_data) => {
                             // Check if this was a terminal transition even with Keep
-                            let is_terminal = matches!((&state, &event), #(#terminal_transition_checks)|*);
+                            let is_terminal = #terminal_check;
 
                             if is_terminal {
                                 // Call on_terminate before stopping
@@ -303,7 +314,7 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
                             self.state = Some(state);
                             self.data = Some(kept_data);
                         }
-                        TransitionResult::Error(_err) => {
+                        #result_enum_name::Error(_err) => {
                             // Keep current state on error
                             self.state = Some(state);
                             self.data = Some(data);
