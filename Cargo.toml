@@ -1,7 +1,7 @@
 [package]
 name = "joerl"
 version = "0.1.0"
-edition = "2025"
+edition = "2024"
 authors = ["Aleksei Matiushkin <am@ambment.cat>"]
 description = "An Erlang-inspired actor model library for Rust"
 license = "MIT"
