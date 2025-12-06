@@ -12,7 +12,9 @@ use crate::error::{ActorError, Result};
 use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox, MailboxSender};
 use crate::message::{Envelope, ExitReason, Message, MonitorRef, Signal};
 use dashmap::DashMap;
+use futures::FutureExt;
 use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::task::JoinHandle;
@@ -393,34 +395,54 @@ impl ActorSystem {
 
         let system = Arc::clone(self);
         let join_handle = tokio::spawn(async move {
-            // Call started hook
-            actor.started(&mut ctx).await;
+            // Wrap the entire actor execution in catch_unwind to handle panics
+            let exit_reason = AssertUnwindSafe(async {
+                // Call started hook
+                actor.started(&mut ctx).await;
 
-            // Main message loop
-            let exit_reason = loop {
-                match ctx.recv().await {
-                    Some(Envelope::Message(msg)) => {
-                        actor.handle_message(msg, &mut ctx).await;
+                // Main message loop
+                let exit_reason = loop {
+                    match ctx.recv().await {
+                        Some(Envelope::Message(msg)) => {
+                            actor.handle_message(msg, &mut ctx).await;
+                        }
+                        Some(Envelope::Signal(signal)) => {
+                            actor.handle_signal(signal, &mut ctx).await;
+                        }
+                        None => {
+                            // Mailbox closed, exit normally
+                            break ExitReason::Normal;
+                        }
                     }
-                    Some(Envelope::Signal(signal)) => {
-                        actor.handle_signal(signal, &mut ctx).await;
+
+                    // Check if actor should stop
+                    if ctx.should_stop() {
+                        break ctx.stop_reason().cloned().unwrap_or(ExitReason::Normal);
                     }
-                    None => {
-                        // Mailbox closed, exit normally
-                        break ExitReason::Normal;
-                    }
-                }
+                };
 
-                // Check if actor should stop
-                if ctx.should_stop() {
-                    break ctx.stop_reason().cloned().unwrap_or(ExitReason::Normal);
-                }
-            };
+                // Call stopped hook
+                actor.stopped(&exit_reason, &mut ctx).await;
 
-            // Call stopped hook
-            actor.stopped(&exit_reason, &mut ctx).await;
+                exit_reason
+            })
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|panic_info| {
+                // Convert panic to ExitReason
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Actor panicked".to_string()
+                };
 
-            // Cleanup
+                tracing::error!("Actor {} panicked: {}", pid, panic_msg);
+                ExitReason::Panic(panic_msg)
+            });
+
+            // Cleanup - always runs even if actor panicked
             system.cleanup_actor(pid, &exit_reason).await;
 
             exit_reason

@@ -73,9 +73,12 @@
 //! - [`mailbox`]: Bounded mailbox implementation
 //! - [`supervisor`]: Supervision trees and restart strategies
 //! - [`gen_server`]: Generic server behavior (Erlang's gen_server)
-//! - [`gen_statem`]: Generic state machine behavior (Erlang's gen_statem)
+//! - [`mod@gen_statem`]: Generic state machine behavior (Erlang's gen_statem)
 //! - [`error`]: Error types and results
 
+#![doc = include_str!("../../stuff/PANIC_HANDLING.md")]
+
+/* content of the module */
 pub mod actor;
 pub mod error;
 pub mod gen_server;

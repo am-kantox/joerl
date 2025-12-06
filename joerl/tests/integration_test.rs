@@ -1,6 +1,7 @@
 //! Integration tests for joerl actor system.
 
 use async_trait::async_trait;
+use joerl::supervisor::{ChildSpec, RestartStrategy, SupervisorSpec, spawn_supervisor};
 use joerl::{Actor, ActorContext, ActorSystem, ExitReason, Message, Signal};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -255,4 +256,271 @@ async fn test_multiple_actors_concurrently() {
     for actor in &actors {
         assert!(system.is_alive(actor.pid()));
     }
+}
+
+#[tokio::test]
+async fn test_actor_panic_notifies_links() {
+    let system = ActorSystem::new();
+
+    struct PanicActor;
+
+    #[async_trait]
+    impl Actor for PanicActor {
+        async fn handle_message(&mut self, msg: Message, _ctx: &mut ActorContext) {
+            if let Some(cmd) = msg.downcast_ref::<&str>()
+                && *cmd == "panic"
+            {
+                panic!("intentional panic for testing");
+            }
+        }
+    }
+
+    struct LinkedActor {
+        exit_received: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Actor for LinkedActor {
+        async fn started(&mut self, ctx: &mut ActorContext) {
+            ctx.trap_exit(true);
+        }
+
+        async fn handle_signal(&mut self, signal: Signal, _ctx: &mut ActorContext) {
+            if let Signal::Exit { reason, .. } = signal
+                && matches!(reason, ExitReason::Panic(_))
+            {
+                self.exit_received.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    let exit_counter = Arc::new(AtomicUsize::new(0));
+
+    let panic_actor = system.spawn(PanicActor);
+    let linked_actor = system.spawn(LinkedActor {
+        exit_received: Arc::clone(&exit_counter),
+    });
+
+    // Link the actors
+    system.link(panic_actor.pid(), linked_actor.pid()).unwrap();
+    let panic_pid = panic_actor.pid();
+
+    // Trigger panic
+    panic_actor.send(Box::new("panic")).await.unwrap();
+
+    sleep(Duration::from_millis(200)).await;
+
+    // Linked actor should have received EXIT signal with Panic reason
+    assert_eq!(exit_counter.load(Ordering::SeqCst), 1);
+
+    // Panicked actor should be cleaned up
+    assert!(!system.is_alive(panic_pid));
+}
+
+#[tokio::test]
+async fn test_actor_panic_notifies_monitors() {
+    let system = ActorSystem::new();
+
+    struct PanicActor;
+
+    #[async_trait]
+    impl Actor for PanicActor {
+        async fn handle_message(&mut self, msg: Message, _ctx: &mut ActorContext) {
+            if let Some(cmd) = msg.downcast_ref::<&str>()
+                && *cmd == "panic"
+            {
+                panic!("intentional panic for testing");
+            }
+        }
+    }
+
+    struct MonitorActor {
+        down_received: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Actor for MonitorActor {
+        async fn handle_signal(&mut self, signal: Signal, _ctx: &mut ActorContext) {
+            if let Signal::Down { reason, .. } = signal
+                && matches!(reason, ExitReason::Panic(_))
+            {
+                self.down_received.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    let down_counter = Arc::new(AtomicUsize::new(0));
+
+    let panic_actor = system.spawn(PanicActor);
+    let monitor_actor = system.spawn(MonitorActor {
+        down_received: Arc::clone(&down_counter),
+    });
+
+    // Monitor the panic actor
+    panic_actor.monitor(monitor_actor.pid()).unwrap();
+    let panic_pid = panic_actor.pid();
+
+    // Trigger panic
+    panic_actor.send(Box::new("panic")).await.unwrap();
+
+    sleep(Duration::from_millis(200)).await;
+
+    // Monitor should have received DOWN signal with Panic reason
+    assert_eq!(down_counter.load(Ordering::SeqCst), 1);
+
+    // Panicked actor should be cleaned up
+    assert!(!system.is_alive(panic_pid));
+}
+
+#[tokio::test]
+async fn test_supervisor_restarts_panicked_child() {
+    let system = Arc::new(ActorSystem::new());
+    let panic_count = Arc::new(AtomicUsize::new(0));
+    let panic_count_clone = Arc::clone(&panic_count);
+
+    struct PanickingWorker {
+        panic_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Actor for PanickingWorker {
+        async fn started(&mut self, _ctx: &mut ActorContext) {
+            let count = self.panic_count.fetch_add(1, Ordering::SeqCst);
+            // Only panic on first start, not on restart
+            if count == 0 {
+                panic!("intentional panic on first start");
+            }
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    let spec = SupervisorSpec::new(RestartStrategy::OneForOne).child(ChildSpec::new(
+        "worker",
+        move || {
+            Box::new(PanickingWorker {
+                panic_count: Arc::clone(&panic_count_clone),
+            })
+        },
+    ));
+
+    let _supervisor = spawn_supervisor(&system, spec);
+
+    // Wait for initial panic and restart
+    sleep(Duration::from_millis(300)).await;
+
+    // Worker should have been started twice: once (panic) and once (restart)
+    let count = panic_count.load(Ordering::SeqCst);
+    assert!(
+        count >= 2,
+        "Worker should have been restarted after panic, got {} starts",
+        count
+    );
+}
+
+#[tokio::test]
+async fn test_panic_in_started_hook() {
+    let system = ActorSystem::new();
+
+    struct PanicInStarted;
+
+    #[async_trait]
+    impl Actor for PanicInStarted {
+        async fn started(&mut self, _ctx: &mut ActorContext) {
+            panic!("panic in started hook");
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    struct MonitorActor {
+        down_received: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Actor for MonitorActor {
+        async fn handle_signal(&mut self, signal: Signal, _ctx: &mut ActorContext) {
+            if let Signal::Down { reason, .. } = signal
+                && matches!(reason, ExitReason::Panic(_))
+            {
+                self.down_received.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    let down_counter = Arc::new(AtomicUsize::new(0));
+
+    let panic_actor = system.spawn(PanicInStarted);
+    let monitor_actor = system.spawn(MonitorActor {
+        down_received: Arc::clone(&down_counter),
+    });
+
+    panic_actor.monitor(monitor_actor.pid()).unwrap();
+    let panic_pid = panic_actor.pid();
+
+    sleep(Duration::from_millis(200)).await;
+
+    // Monitor should receive DOWN even though panic happened in started
+    assert_eq!(down_counter.load(Ordering::SeqCst), 1);
+    assert!(!system.is_alive(panic_pid));
+}
+
+#[tokio::test]
+async fn test_panic_during_stopped_hook() {
+    let system = ActorSystem::new();
+
+    struct PanicInStopped;
+
+    #[async_trait]
+    impl Actor for PanicInStopped {
+        async fn stopped(&mut self, _reason: &ExitReason, _ctx: &mut ActorContext) {
+            // Even if stopped panics, monitor should be notified
+            panic!("panic in stopped hook");
+        }
+
+        async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+            if let Some(cmd) = msg.downcast_ref::<&str>()
+                && *cmd == "stop"
+            {
+                ctx.stop(ExitReason::Normal);
+            }
+        }
+    }
+
+    struct MonitorActor {
+        down_received: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Actor for MonitorActor {
+        async fn handle_signal(&mut self, signal: Signal, _ctx: &mut ActorContext) {
+            if let Signal::Down { .. } = signal {
+                self.down_received.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    let down_counter = Arc::new(AtomicUsize::new(0));
+
+    let actor = system.spawn(PanicInStopped);
+    let monitor_actor = system.spawn(MonitorActor {
+        down_received: Arc::clone(&down_counter),
+    });
+
+    actor.monitor(monitor_actor.pid()).unwrap();
+
+    actor.send(Box::new("stop")).await.unwrap();
+
+    sleep(Duration::from_millis(200)).await;
+
+    // Monitor should still be notified despite panic in stopped
+    assert_eq!(down_counter.load(Ordering::SeqCst), 1);
 }
