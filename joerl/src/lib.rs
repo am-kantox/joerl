@@ -75,8 +75,17 @@
 //! - [`gen_server`]: Generic server behavior (Erlang's gen_server)
 //! - [`mod@gen_statem`]: Generic state machine behavior (Erlang's gen_statem)
 //! - [`error`]: Error types and results
-
-#![doc = include_str!("../../PANIC_HANDLING.md")]
+//!
+//! ## Panic Handling
+//!
+//! joerl implements full Erlang/OTP-style panic handling. When an actor panics:
+//! - The panic is caught and converted to `ExitReason::Panic`
+//! - Linked actors receive EXIT signals
+//! - Monitoring actors receive DOWN signals
+//! - Supervisors automatically restart the panicked actor
+//! - Cleanup always happens (no resource leaks)
+//!
+//! See the `panic_handling` example for a comprehensive demonstration.
 
 /* content of the module */
 pub mod actor;
