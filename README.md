@@ -322,6 +322,7 @@ See the [`examples/`](examples/) directory for more examples:
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
+- **`panic_handling.rs` - Comprehensive panic handling demonstration (Erlang/OTP-style)**
 - `remote_actors.rs` - Distributed actors conceptual foundation
 - `distributed_chat.rs` - Multi-node chat system over TCP
 
