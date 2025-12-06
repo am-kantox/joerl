@@ -455,14 +455,14 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "joerl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "actix",
  "async-trait",
  "criterion",
  "dashmap",
  "futures",
- "joerl_macro 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "joerl_macro",
  "parking_lot",
  "serde",
  "serde_json",
@@ -476,18 +476,7 @@ dependencies = [
 
 [[package]]
 name = "joerl_macro"
-version = "0.2.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "joerl_macro"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf5c9ffd219e9327214726a97bb55a4d1d67871cd5188a70a3fe1335114f112c"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
