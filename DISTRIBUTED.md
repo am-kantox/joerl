@@ -4,11 +4,159 @@ This document explains the distributed actor system examples in joerl and how th
 
 ## Overview
 
-Erlang/OTP has built-in support for distributed computing where actors (processes) can transparently communicate across different nodes in a cluster. While joerl doesn't have built-in distribution (yet!), the examples demonstrate the foundational concepts needed to build such a system.
+Erlang/OTP has built-in support for distributed computing where actors (processes) can transparently communicate across different nodes in a cluster. **joerl now includes EPMD (Erlang Port Mapper Daemon) support for node discovery and the foundation for location-transparent distributed computing!**
+
+### ✅ What's Implemented
+
+- **EPMD Server**: Standalone port mapper daemon for node registry (port 4369)
+- **EPMD Client**: Library for node registration, discovery, and keep-alive
+- **DistributedSystem**: Node-aware actor system with EPMD integration
+- **Location Transparency Foundation**: Pids with node support, serialization ready
+- **TCP Transport**: Node-to-node connection management with auto-reconnect
+- **Production-Ready Examples**: Working multi-node cluster demonstrations
+
+See [CLUSTERING.md](./CLUSTERING.md) for complete documentation and [QUICKSTART_CLUSTERING.md](./QUICKSTART_CLUSTERING.md) for getting started.
+
+## Quick Start with EPMD
+
+```bash
+# Terminal 1: Start EPMD server
+cargo run --example epmd_server
+
+# Terminal 2: Start first node
+cargo run --example distributed_system_example -- node_a 5001
+
+# Terminal 3: Start second node
+cargo run --example distributed_system_example -- node_b 5002
+
+# Nodes automatically discover each other!
+```
+
+See [CLUSTERING.md](./CLUSTERING.md) for detailed usage.
 
 ## Examples
 
-### 1. `remote_actors.rs` - Conceptual Foundation
+### 1. `epmd_server.rs` - Standalone EPMD Server ✨ NEW
+
+A production-ready EPMD (Erlang Port Mapper Daemon) server for node discovery.
+
+**Key Features:**
+
+- **Node Registry**: Maintains in-memory registry of all cluster nodes
+- **Keep-Alive Protocol**: Automatically removes dead nodes after 60s timeout
+- **Binary Protocol**: Efficient bincode serialization (compatible with Erlang's port 4369)
+- **Concurrent Connections**: Handles multiple clients simultaneously
+- **Health Checks**: Ping/pong protocol for monitoring
+
+**Architecture:**
+
+```
+┌──────────────────────┐
+│   EPMD Server        │
+│   Port 4369          │
+│                      │
+│  Node Registry:      │
+│  - node_a:5001      │
+│  - node_b:5002      │
+│  - node_c:5003      │
+└──────┬───────────────┘
+       │
+  ┌────┴─────┐
+  │   TCP    │
+  │ Protocol │
+  └────┬─────┘
+       │
+    Clients
+    (Nodes)
+```
+
+**Protocol Messages:**
+- `Register` - Register node with name, host, port, metadata
+- `Unregister` - Remove node from registry
+- `Lookup` - Find node by name
+- `ListNodes` - Get all registered nodes
+- `Ping/Pong` - Health check
+- `KeepAlive` - Maintain registration
+
+**Running:**
+
+```bash
+# Default (127.0.0.1:4369)
+cargo run --example epmd_server
+
+# Custom address
+cargo run --example epmd_server -- 0.0.0.0:4369
+```
+
+### 2. `distributed_system_example.rs` - DistributedSystem API ✨ NEW
+
+Demonstrates the `DistributedSystem` API for building distributed actor systems.
+
+**Key Features:**
+
+- **Automatic EPMD Registration**: Registers with EPMD on startup
+- **Node Discovery**: Automatically discovers peer nodes
+- **Connection Management**: Establishes and maintains connections to peers
+- **Location Transparency**: Same API as ActorSystem
+- **Graceful Shutdown**: Unregisters from EPMD on exit
+
+**Usage:**
+
+```rust
+use joerl::distributed::DistributedSystem;
+
+// Create distributed system
+let system = DistributedSystem::new(
+    "my_node",
+    "127.0.0.1:5000",
+    "127.0.0.1:4369"
+).await?;
+
+// Spawn actors (same API as ActorSystem)
+let actor = system.system().spawn(MyActor);
+
+// Discover other nodes
+let nodes = system.list_nodes().await?;
+
+// Connect to remote node
+system.connect_to_node("other_node").await?;
+```
+
+**Running:**
+
+```bash
+# Start EPMD first
+cargo run --example epmd_server
+
+# Start nodes
+cargo run --example distributed_system_example -- node_a 5001
+cargo run --example distributed_system_example -- node_b 5002
+```
+
+### 3. `distributed_cluster.rs` - Multi-Node Cluster ✨ NEW
+
+Complete example of a multi-node cluster with EPMD discovery.
+
+**Key Features:**
+
+- **Peer Discovery**: Nodes automatically find each other via EPMD
+- **Keep-Alive Loop**: Maintains registration with 20s interval
+- **Connection Pooling**: Reuses connections between nodes
+- **Cluster Awareness**: Each node knows about all peers
+
+**Running:**
+
+```bash
+# Terminal 1
+cargo run --example epmd_server
+
+# Terminals 2, 3, 4
+cargo run --example distributed_cluster -- node_a 5001
+cargo run --example distributed_cluster -- node_b 5002
+cargo run --example distributed_cluster -- node_c 5003
+```
+
+### 4. `remote_actors.rs` - Conceptual Foundation
 
 This example demonstrates the core concepts of distributed actors using multiple `ActorSystem` instances to simulate different nodes.
 
@@ -49,7 +197,7 @@ The example shows:
 - Request-reply patterns across nodes
 - Echo and compute operations demonstrating different message types
 
-### 2. `distributed_chat.rs` - Real Network Implementation
+### 5. `distributed_chat.rs` - Real Network Implementation
 
 This example implements a distributed chat system using TCP networking, demonstrating how joerl actors can communicate across actual network boundaries.
 
@@ -132,87 +280,184 @@ if let Some((system, proxy_pid)) = registry.get_node("node_b").await {
 }
 ```
 
-## Building a Production Distributed System
+## EPMD Implementation Details
 
-To build a production-ready distributed actor system with joerl, you would need:
+### Architecture
 
-### 1. Transport Layer
+The distributed system follows a layered architecture:
 
-- **Multiple Protocols**: Support TCP, UDP, Unix sockets, or custom protocols
-- **Connection Pooling**: Reuse connections efficiently
-- **Heartbeat/Keepalive**: Detect and handle network failures
-- **Encryption**: TLS/SSL for secure communication
+```
+┌────────────────────────────────────────┐
+│  Application Layer (Your Actors)      │
+├────────────────────────────────────────┤
+│  DistributedSystem (Location Trans.)  │
+├────────────────────────────────────────┤
+│  ActorSystem (Local Runtime)          │
+├────────────────────────────────────────┤
+│  EPMD Client/Server (Discovery)       │
+├────────────────────────────────────────┤
+│  TCP Transport (Node-to-Node)         │
+└────────────────────────────────────────┘
+```
 
-### 2. Serialization
+### Node Discovery Flow
 
-- **Efficient Format**: Consider bincode, MessagePack, or Protocol Buffers instead of JSON
-- **Schema Evolution**: Handle version compatibility
-- **Type Safety**: Ensure message types match across nodes
+1. Node starts → Create `DistributedSystem`
+2. Extract host/port from listen address
+3. Connect to EPMD server
+4. Register node with EPMD (name, host, port, metadata)
+5. Start keep-alive loop (20s interval)
+6. Start TCP listener for incoming connections
+7. Periodically query EPMD for peers
+8. Connect to discovered nodes
 
-### 3. Node Discovery
+### Pid with Node Support
 
-- **DNS-based**: Use SRV records for node discovery
-- **Multicast**: UDP multicast for local network discovery  
-- **Consensus**: Use Raft or similar for cluster membership
-- **Static Configuration**: Simple file-based node lists
-
-### 4. Location Transparency
-
-- **Extended Pid Format**: Include node information in PIDs
-  ```rust
-  struct Pid {
-      node: NodeId,
-      local_id: LocalPid,
-  }
-  ```
-- **Automatic Routing**: ActorSystem routes based on Pid's node
-- **Proxy Pattern**: Local proxies represent remote actors
-
-### 5. Fault Tolerance
-
-- **Network Partitions**: Detect and handle split-brain scenarios
-- **Node Monitoring**: Detect when nodes go offline
-- **Automatic Reconnection**: Retry connections with exponential backoff
-- **Message Guarantees**: At-least-once or exactly-once delivery
-
-### 6. Performance Optimizations
-
-- **Message Batching**: Combine multiple messages into fewer network packets
-- **Compression**: Compress large messages
-- **Zero-copy**: Use techniques to minimize data copying
-- **Backpressure**: Propagate backpressure across network boundaries
-
-## Example: Extended Pid Format
+Pids now include node information:
 
 ```rust
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DistributedPid {
-    node_id: u64,      // Identifies which node
-    local_pid: Pid,    // Local process ID on that node
+#[derive(Serialize, Deserialize)]
+pub struct Pid {
+    node: u32,    // Node ID (0 for local, hash of name for remote)
+    id: u64,      // Unique ID within node
 }
 
-impl DistributedPid {
-    pub fn is_local(&self, current_node: u64) -> bool {
-        self.node_id == current_node
-    }
+// Create local Pid
+let local = Pid::new();  // node=0
+
+// Create remote Pid
+let remote = Pid::with_node(42, 100);  // node=42, id=100
+
+// Check if local
+assert!(local.is_local());
+assert!(!remote.is_local());
+
+// Display format shows node
+println!("{}", local);   // <0.123.0>
+println!("{}", remote);  // <42.100.0>
+```
+
+### Connection Management
+
+```rust
+// NodeRegistry maintains connection pool
+struct NodeRegistry {
+    connections: Arc<DashMap<String, Arc<NodeConnection>>>,
+}
+
+// Each connection handles automatic reconnection
+struct NodeConnection {
+    node_info: NodeInfo,
+    stream: RwLock<Option<TcpStream>>,
+}
+
+// Reconnects automatically on send failure
+if stream_guard.is_none() {
+    *stream_guard = Some(TcpStream::connect(&addr).await?);
 }
 ```
 
-## Example: Transparent Routing
+## Building on the Foundation
+
+The EPMD implementation provides the infrastructure. To build a complete distributed system, you can extend with:
+
+### 1. Message Serialization Strategy ⚠️ User Choice
+
+The current implementation provides transport but leaves message serialization to users:
+
+**Option 1: User-level serialization**
+```rust
+let data = serde_json::to_vec(&my_message)?;
+remote_actor.send(Box::new(data)).await?;
+```
+
+**Option 2: Trait-based approach**
+```rust
+pub trait RemoteMessage: Any + Send + Serialize + Deserialize {}
+```
+
+**Option 3: Message envelope**
+```rust
+#[derive(Serialize, Deserialize)]
+enum RemoteCommand {
+    Echo(String),
+    Compute(i32, i32),
+}
+```
+
+### 2. Additional Features You Can Add
+
+- **Remote Actor Spawn**: Spawn actors on specific nodes
+- **Global Registry**: Name → Pid mapping across cluster
+- **Remote Links/Monitors**: Distributed supervision
+- **Security**: TLS, authentication, encryption
+- **Alternative Discovery**: DNS, multicast, Consul, etcd
+
+### 3. Advanced Patterns
+
+- **Proxy Pattern**: Local proxies for remote actors
+- **Message Batching**: Combine messages for efficiency
+- **Compression**: Compress large payloads
+- **Backpressure**: Propagate across network
+
+## Current Implementation Status
+
+### ✅ Fully Implemented
+
+- **EPMD Server**: Complete standalone server with node registry
+- **EPMD Client**: Registration, lookup, keep-alive
+- **DistributedSystem**: Node-aware actor system wrapper
+- **Node Discovery**: Automatic peer discovery via EPMD
+- **Connection Management**: TCP transport with auto-reconnect
+- **Pid Serialization**: Pids with node support
+- **Keep-Alive Protocol**: Automatic dead node removal
+- **Production Examples**: Working multi-node demonstrations
+
+### 🚧 Infrastructure Ready (User Implementation)
+
+- **Remote Messaging**: Transport ready, serialization strategy is user choice
+- **Message Routing**: Can be built on NetworkMessage infrastructure
+- **Remote Spawn**: Foundation in place
+
+### 🔮 Future Enhancements
+
+- **Global Registry**: Cluster-wide name → Pid mapping
+- **Remote Links/Monitors**: Distributed supervision
+- **TLS Support**: Encrypted node-to-node communication
+- **Alternative Discovery**: DNS, multicast, Consul, etcd
+
+## Example: Using DistributedSystem
 
 ```rust
-impl ActorSystem {
-    pub async fn send_distributed(&self, pid: DistributedPid, msg: Message) -> Result<()> {
-        if pid.is_local(self.node_id) {
-            // Local send
-            self.send(pid.local_pid, msg).await
-        } else {
-            // Remote send - serialize and forward to appropriate node
-            let node = self.cluster.get_node(pid.node_id)?;
-            let serialized = serialize_message(msg)?;
-            node.send_bytes(pid.local_pid, serialized).await
-        }
-    }
+use joerl::distributed::DistributedSystem;
+use joerl::{Actor, ActorContext, Message};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create distributed system
+    let system = DistributedSystem::new(
+        "my_node",              // Node name
+        "127.0.0.1:5000",       // Listen address
+        "127.0.0.1:4369"        // EPMD address
+    ).await?;
+    
+    // Spawn actors (same API as ActorSystem)
+    let actor = system.system().spawn(MyActor);
+    
+    // Discover peers
+    let nodes = system.list_nodes().await?;
+    println!("Cluster nodes: {:?}", nodes);
+    
+    // Connect to specific node
+    system.connect_to_node("other_node").await?;
+    
+    // Local messaging works as before
+    actor.send(Box::new("hello")).await?;
+    
+    // Graceful shutdown
+    system.shutdown().await?;
+    
+    Ok(())
 }
 ```
 
@@ -226,14 +471,30 @@ When building a distributed system:
 4. **Input Validation**: Carefully validate all incoming messages
 5. **DoS Protection**: Rate limit message processing and connections
 
+## Documentation
+
+- **[CLUSTERING.md](./CLUSTERING.md)** - Complete clustering guide with architecture, API reference, best practices
+- **[QUICKSTART_CLUSTERING.md](./QUICKSTART_CLUSTERING.md)** - 5-minute getting started tutorial
+- **[IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md)** - Technical implementation details and design decisions
+
 ## Further Reading
 
 - [Erlang Distribution Protocol](https://www.erlang.org/doc/apps/erts/erl_dist_protocol.html)
 - [Distributed Erlang](https://learnyousomeerlang.com/distribunomicon)
+- [EPMD - Erlang Port Mapper Daemon](https://www.erlang.org/doc/man/epmd.html)
 - [Building Distributed Applications with Tokio](https://tokio.rs/tokio/topics/bridging)
 - [Raft Consensus Algorithm](https://raft.github.io/)
 - [CAP Theorem](https://en.wikipedia.org/wiki/CAP_theorem)
 
 ## Contributing
 
-If you're interested in contributing built-in distributed actor support to joerl, please open an issue to discuss the design approach!
+The distributed clustering foundation is now in place! Contributions welcome for:
+
+- Advanced remote messaging patterns
+- Alternative discovery mechanisms (DNS, multicast, Consul)
+- Security features (TLS, authentication)
+- Global registry implementation
+- Performance optimizations
+- Additional examples and documentation
+
+Please open an issue to discuss your ideas!

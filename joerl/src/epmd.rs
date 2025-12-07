@@ -40,7 +40,7 @@ use std::fmt;
 use thiserror::Error;
 
 /// Default EPMD port (same as Erlang)
-pub const DEFAULT_EPMD_PORT: u16 = 4369;
+pub const DEFAULT_EPMD_PORT: u16 = 4370;
 
 /// EPMD protocol errors
 #[derive(Debug, Error)]
