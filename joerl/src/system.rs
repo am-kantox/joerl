@@ -232,6 +232,7 @@ struct ActorEntry {
     sender: MailboxSender,
     links: HashSet<Pid>,
     monitors: HashSet<(Pid, MonitorRef)>, // (monitoring_pid, ref)
+    actor_type: String,                   // Type name for telemetry
 }
 
 /// The actor system runtime.
@@ -341,7 +342,8 @@ impl ActorSystem {
     /// # });
     /// ```
     pub fn spawn_with_capacity<A: Actor>(self: &Arc<Self>, actor: A, capacity: usize) -> ActorRef {
-        self.spawn_internal(Box::new(actor), capacity)
+        let actor_type = crate::telemetry::actor_type_name::<A>();
+        self.spawn_internal(Box::new(actor), capacity, actor_type)
     }
 
     /// Spawns a boxed actor with a specific mailbox capacity.
@@ -377,27 +379,35 @@ impl ActorSystem {
         actor: Box<dyn Actor>,
         capacity: usize,
     ) -> ActorRef {
-        self.spawn_internal(actor, capacity)
+        self.spawn_internal(actor, capacity, "boxed")
     }
 
     /// Internal spawn implementation.
-    fn spawn_internal(self: &Arc<Self>, mut actor: Box<dyn Actor>, capacity: usize) -> ActorRef {
+    fn spawn_internal(
+        self: &Arc<Self>,
+        mut actor: Box<dyn Actor>,
+        capacity: usize,
+        actor_type: &str,
+    ) -> ActorRef {
         let pid = Pid::new();
         let (mailbox, sender) = Mailbox::new(capacity);
         let mut ctx = ActorContext::new(pid, mailbox);
+        let actor_type_owned = actor_type.to_string();
 
         // Register actor
         let entry = ActorEntry {
             sender: sender.clone(),
             links: HashSet::new(),
             monitors: HashSet::new(),
+            actor_type: actor_type_owned.clone(),
         };
         self.actors.insert(pid, entry);
 
-        // Telemetry: record actor spawn
-        ActorMetrics::actor_spawned();
+        // Telemetry: record actor spawn with type
+        ActorMetrics::actor_spawned_typed(&actor_type_owned);
 
         let system = Arc::clone(self);
+        let actor_type_for_panic = actor_type_owned.clone();
         let join_handle = tokio::spawn(async move {
             // Wrap the entire actor execution in catch_unwind to handle panics
             let exit_reason = AssertUnwindSafe(async {
@@ -444,8 +454,13 @@ impl ActorSystem {
                     "Actor panicked".to_string()
                 };
 
-                tracing::error!("Actor {} panicked: {}", pid, panic_msg);
-                ActorMetrics::actor_panicked();
+                tracing::error!(
+                    "Actor {} ({}) panicked: {}",
+                    pid,
+                    actor_type_for_panic,
+                    panic_msg
+                );
+                ActorMetrics::actor_panicked_typed(&actor_type_for_panic);
                 ExitReason::Panic(panic_msg)
             });
 
@@ -673,7 +688,14 @@ impl ActorSystem {
 
     /// Cleans up an actor after termination.
     async fn cleanup_actor(&self, pid: Pid, reason: &ExitReason) {
-        // Telemetry: record actor stop
+        // Get actor type and remove from registry
+        let (actor_type, links, monitors) = if let Some((_, entry)) = self.actors.remove(&pid) {
+            (entry.actor_type, entry.links, entry.monitors)
+        } else {
+            return;
+        };
+
+        // Telemetry: record actor stop with type
         let reason_str = match reason {
             ExitReason::Normal => "normal",
             ExitReason::Shutdown => "shutdown",
@@ -681,13 +703,7 @@ impl ActorSystem {
             ExitReason::Panic(_) => "panic",
             ExitReason::Custom(_) => "custom",
         };
-        ActorMetrics::actor_stopped(reason_str);
-
-        let (links, monitors) = if let Some((_, entry)) = self.actors.remove(&pid) {
-            (entry.links, entry.monitors)
-        } else {
-            return;
-        };
+        ActorMetrics::actor_stopped_typed(&actor_type, reason_str);
 
         // Send EXIT signals to linked actors
         for linked_pid in links {

@@ -52,10 +52,12 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
-| `joerl_actors_spawned_total` | Counter | Total actors spawned | - |
-| `joerl_actors_stopped_total` | Counter | Total actors stopped | `reason` |
-| `joerl_actors_active` | Gauge | Current number of active actors | - |
-| `joerl_actors_panicked_total` | Counter | Total actors that panicked | - |
+| `joerl_actors_spawned_total` | Counter | Total actors spawned | `type` |
+| `joerl_actors_stopped_total` | Counter | Total actors stopped | `type`, `reason` |
+| `joerl_actors_active` | Gauge | Current number of active actors | `type` |
+| `joerl_actors_panicked_total` | Counter | Total actors that panicked | `type` |
+
+**Type labels**: Actor struct name (e.g., `"Worker"`, `"Supervisor"`, `"boxed"` for dynamically spawned actors)
 
 **Reason labels**: `normal`, `shutdown`, `killed`, `panic`, `custom`
 
@@ -174,6 +176,9 @@ Example PromQL queries:
 # Actor throughput (actors spawned per second)
 rate(joerl_actors_spawned_total[1m])
 
+# Actor throughput by type
+rate(joerl_actors_spawned_total[1m]) by (type)
+
 # Average message processing latency
 rate(joerl_message_processing_duration_seconds_sum[1m]) / 
 rate(joerl_message_processing_duration_seconds_count[1m])
@@ -181,11 +186,20 @@ rate(joerl_message_processing_duration_seconds_count[1m])
 # Current active actors
 joerl_actors_active
 
+# Active actors by type
+joerl_actors_active by (type)
+
+# Actor stop rate by type and reason
+rate(joerl_actors_stopped_total[5m]) by (type, reason)
+
 # Message send failure rate
 rate(joerl_messages_sent_failed_total[1m])
 
 # Supervisor restart rate by strategy
 rate(joerl_supervisor_restarts_total[5m])
+
+# Find actors with high panic rates
+topk(5, rate(joerl_actors_panicked_total[5m]) by (type))
 ```
 
 ### Datadog

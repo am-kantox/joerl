@@ -103,35 +103,67 @@ impl Drop for TelemetrySpan {
     }
 }
 
+/// Actor type name helper.
+///
+/// Extracts a human-readable type name from a type.
+/// This is used for metric labels to identify actor types.
+pub fn actor_type_name<T: ?Sized>() -> &'static str {
+    let full_name = std::any::type_name::<T>();
+    // Extract just the struct name, removing module path
+    full_name.rsplit("::").next().unwrap_or(full_name)
+}
+
 /// Actor lifecycle metrics.
 pub struct ActorMetrics;
 
 impl ActorMetrics {
-    /// Records an actor spawn.
+    /// Records an actor spawn with type information.
+    #[inline]
+    pub fn actor_spawned_typed(actor_type: &str) {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_actors_spawned_total", "type" => actor_type.to_string()).increment(1);
+            gauge!("joerl_actors_active", "type" => actor_type.to_string()).increment(1.0);
+        }
+    }
+
+    /// Records an actor spawn (backward compatible, no type label).
     #[inline]
     pub fn actor_spawned() {
+        Self::actor_spawned_typed("unknown")
+    }
+
+    /// Records an actor stop with type information.
+    #[inline]
+    pub fn actor_stopped_typed(actor_type: &str, _reason: &str) {
         #[cfg(feature = "telemetry")]
         {
-            counter!("joerl_actors_spawned_total").increment(1);
-            gauge!("joerl_actors_active").increment(1.0);
+            counter!("joerl_actors_stopped_total",
+                "type" => actor_type.to_string(),
+                "reason" => _reason.to_string()
+            )
+            .increment(1);
+            gauge!("joerl_actors_active", "type" => actor_type.to_string()).decrement(1.0);
         }
     }
 
-    /// Records an actor stop.
+    /// Records an actor stop (backward compatible, no type label).
     #[inline]
     pub fn actor_stopped(_reason: &str) {
-        #[cfg(feature = "telemetry")]
-        {
-            counter!("joerl_actors_stopped_total", "reason" => _reason.to_string()).increment(1);
-            gauge!("joerl_actors_active").decrement(1.0);
-        }
+        Self::actor_stopped_typed("unknown", _reason)
     }
 
-    /// Records an actor panic.
+    /// Records an actor panic with type information.
+    #[inline]
+    pub fn actor_panicked_typed(actor_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_actors_panicked_total", "type" => actor_type.to_string()).increment(1);
+    }
+
+    /// Records an actor panic (backward compatible, no type label).
     #[inline]
     pub fn actor_panicked() {
-        #[cfg(feature = "telemetry")]
-        counter!("joerl_actors_panicked_total").increment(1);
+        Self::actor_panicked_typed("unknown")
     }
 }
 
