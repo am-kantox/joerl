@@ -14,7 +14,7 @@ static PID_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Pids are lightweight, copyable handles that can be sent between actors.
 /// They follow Erlang naming conventions where a process is identified by
 /// a unique Pid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Pid {
     /// Node identifier for distributed systems (0 for local)
     pub(crate) node: u32,
@@ -41,9 +41,22 @@ impl Pid {
         }
     }
 
-    /// Creates a Pid with a specific node and id (primarily for testing and remote actors).
-    #[cfg(test)]
-    pub(crate) fn with_node(node: u32, id: u64) -> Self {
+    /// Creates a Pid with a specific node and id.
+    ///
+    /// This is useful for distributed systems where Pids need to reference
+    /// actors on different nodes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::Pid;
+    ///
+    /// let remote_pid = Pid::with_node(42, 100);
+    /// assert_eq!(remote_pid.node(), 42);
+    /// assert_eq!(remote_pid.id(), 100);
+    /// assert!(!remote_pid.is_local());
+    /// ```
+    pub fn with_node(node: u32, id: u64) -> Self {
         Self { node, id }
     }
 

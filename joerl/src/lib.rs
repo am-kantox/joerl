@@ -11,6 +11,7 @@
 //! - **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
 //! - **Async/Await**: Built on tokio for excellent performance
 //! - **Erlang Conventions**: Familiar API for Erlang/OTP developers
+//! - **Distributed Clustering**: EPMD-based node discovery and location transparency
 //!
 //! ## Quick Start
 //!
@@ -74,6 +75,8 @@
 //! - [`supervisor`]: Supervision trees and restart strategies
 //! - [`gen_server`]: Generic server behavior (Erlang's gen_server)
 //! - [`mod@gen_statem`]: Generic state machine behavior (Erlang's gen_statem)
+//! - [`epmd`]: Node discovery and clustering (EPMD protocol)
+//! - [`distributed`]: Distributed actor systems with location transparency
 //! - [`error`]: Error types and results
 //!
 //! ## Panic Handling
@@ -89,6 +92,8 @@
 
 /* content of the module */
 pub mod actor;
+pub mod distributed;
+pub mod epmd;
 pub mod error;
 pub mod gen_server;
 pub mod gen_statem;
