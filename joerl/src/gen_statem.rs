@@ -131,6 +131,7 @@ use crate::{
     message::{ExitReason, Message},
     pid::Pid,
     system::{ActorRef, ActorSystem},
+    telemetry::{GenStatemMetrics, GenStatemStateSpan, actor_type_name},
 };
 use async_trait::async_trait;
 use std::fmt::Debug;
@@ -313,14 +314,19 @@ struct GenStatemActor<G: GenStatem> {
     statem: G,
     state: Option<G::State>,
     data: Option<G::Data>,
+    fsm_type: &'static str,
+    state_span: Option<GenStatemStateSpan>,
 }
 
 impl<G: GenStatem> GenStatemActor<G> {
     fn new(statem: G) -> Self {
+        let fsm_type = actor_type_name::<G>();
         Self {
             statem,
             state: None,
             data: None,
+            fsm_type,
+            state_span: None,
         }
     }
 }
@@ -330,6 +336,15 @@ impl<G: GenStatem> Actor for GenStatemActor<G> {
     async fn started(&mut self, ctx: &mut ActorContext) {
         let mut sm_ctx = StateMachineContext::new(ctx);
         let (state, data) = self.statem.init(&mut sm_ctx).await;
+
+        // Start tracking state duration and current state
+        let state_str = format!("{:?}", state);
+        GenStatemMetrics::current_state(self.fsm_type, &state_str);
+        self.state_span = Some(GenStatemMetrics::state_duration_span(
+            self.fsm_type,
+            &state_str,
+        ));
+
         self.state = Some(state);
         self.data = Some(data);
     }
@@ -354,6 +369,8 @@ impl<G: GenStatem> Actor for GenStatemActor<G> {
         if let Ok(statem_msg) = msg.downcast::<StatemMsg<G>>() {
             match *statem_msg {
                 StatemMsg::Call { event, reply_tx } => {
+                    let state_str = format!("{:?}", state);
+
                     let transition = self
                         .statem
                         .handle_event(event, state.clone(), data, &mut sm_ctx)
@@ -369,16 +386,40 @@ impl<G: GenStatem> Actor for GenStatemActor<G> {
 
                     if let Some(new_state) = transition.new_state {
                         // State transition occurred
+                        let new_state_str = format!("{:?}", new_state);
+
+                        // Record transition and finish old state duration
+                        GenStatemMetrics::state_transition(
+                            self.fsm_type,
+                            &state_str,
+                            &new_state_str,
+                        );
+                        if let Some(span) = self.state_span.take() {
+                            span.finish();
+                        }
+
+                        // Call state_enter hook
                         self.statem
                             .state_enter(&state, &new_state, data, &mut sm_ctx)
                             .await;
+
+                        // Start tracking new state
+                        GenStatemMetrics::current_state(self.fsm_type, &new_state_str);
+                        self.state_span = Some(GenStatemMetrics::state_duration_span(
+                            self.fsm_type,
+                            &new_state_str,
+                        ));
+
                         self.state = Some(new_state);
                     } else {
-                        // Keep current state
+                        // Keep current state - check if event was handled
+                        // We could track invalid transitions here if needed
                         self.state = Some(state);
                     }
                 }
                 StatemMsg::Cast { event } => {
+                    let state_str = format!("{:?}", state);
+
                     let transition = self
                         .statem
                         .handle_event(event, state.clone(), data, &mut sm_ctx)
@@ -392,9 +433,30 @@ impl<G: GenStatem> Actor for GenStatemActor<G> {
 
                     if let Some(new_state) = transition.new_state {
                         // State transition occurred
+                        let new_state_str = format!("{:?}", new_state);
+
+                        // Record transition and finish old state duration
+                        GenStatemMetrics::state_transition(
+                            self.fsm_type,
+                            &state_str,
+                            &new_state_str,
+                        );
+                        if let Some(span) = self.state_span.take() {
+                            span.finish();
+                        }
+
+                        // Call state_enter hook
                         self.statem
                             .state_enter(&state, &new_state, data, &mut sm_ctx)
                             .await;
+
+                        // Start tracking new state
+                        GenStatemMetrics::current_state(self.fsm_type, &new_state_str);
+                        self.state_span = Some(GenStatemMetrics::state_duration_span(
+                            self.fsm_type,
+                            &new_state_str,
+                        ));
+
                         self.state = Some(new_state);
                     } else {
                         // Keep current state

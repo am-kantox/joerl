@@ -49,28 +49,45 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ---
 
-### 3. GenServer & GenStatem Metrics
-**Status**: Not started  
+### 3. GenServer & GenStatem Metrics ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Immediate  
 **Value**: Track FSM behavior, identify stuck states, measure synchronous call latency
 
-**Metrics to add**:
+**Implementation**:
+- [x] Add `GenServerMetrics` and `GenStatemMetrics` structs to telemetry module
+- [x] Add `GenServerCallSpan` and `GenStatemStateSpan` for duration tracking
+- [x] Add `server_type` field to `GenServerActor` to track server type
+- [x] Instrument GenServer call operations with duration histogram and in-flight gauge
+- [x] Instrument GenServer cast operations with counter
+- [x] Add `fsm_type` and `state_span` fields to `GenStatemActor`
+- [x] Track state transitions with from/to labels
+- [x] Track state duration with automatic span management
+- [x] Track current state with gauge metric
+- [x] Update TELEMETRY.md with new metrics tables and PromQL queries
+- [x] Update telemetry module documentation
+
+**Result**: GenServer and GenStatem now have comprehensive observability for calls, casts, state transitions, and state durations.
+
+**Metrics added**:
 
 **GenServer**:
-- `joerl_genserver_call_duration_seconds{server_type}` (histogram)
-- `joerl_genserver_cast_sent_total{server_type}`
-- `joerl_genserver_call_timeout_total{server_type}`
-- `joerl_genserver_calls_in_flight{server_type}` (gauge)
+- `joerl_gen_server_call_duration_seconds{type}` (histogram)
+- `joerl_gen_server_casts_total{type}` (counter)
+- `joerl_gen_server_call_timeouts_total{type}` (counter, infrastructure ready)
+- `joerl_gen_server_calls_in_flight{type}` (gauge)
 
 **GenStatem**:
-- `joerl_genstatem_state_transitions_total{fsm_type, from_state, to_state}`
-- `joerl_genstatem_invalid_transitions_total{fsm_type, state, event}`
-- `joerl_genstatem_state_duration_seconds{fsm_type, state}` (histogram)
-- `joerl_genstatem_current_state{fsm_type, state}` (gauge)
+- `joerl_gen_statem_transitions_total{type, from, to}` (counter)
+- `joerl_gen_statem_invalid_transitions_total{type, state, event}` (counter, infrastructure ready)
+- `joerl_gen_statem_state_duration_seconds{type, state}` (histogram)
+- `joerl_gen_statem_current_state{type, state}` (gauge)
 
-**Files to modify**:
-- `joerl/src/gen_server.rs`
-- `joerl/src/gen_statem.rs`
+**Files modified**:
+- `joerl/src/telemetry.rs` - Added metrics structs and span types
+- `joerl/src/gen_server.rs` - Instrumented with call/cast tracking
+- `joerl/src/gen_statem.rs` - Instrumented with state transition/duration tracking
+- `TELEMETRY.md` - Updated with metrics documentation and PromQL queries
 
 ---
 
@@ -203,18 +220,18 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## Progress Summary
 
-- **Completed**: 2/12 (16.7%)
+- **Completed**: 3/12 (25%)
 - **In Progress**: 0/12
-- **Not Started**: 10/12
+- **Not Started**: 9/12
 
 ---
 
 ## Priority Order for Implementation
 
-### Phase 1: Core Observability (Immediate)
+### Phase 1: Core Observability (Immediate) ✅ COMPLETED
 1. ✅ **Actor-Level Labels/Metadata** (#1) - COMPLETED
 2. ✅ **Per-Actor Mailbox Tracking** (#4) - COMPLETED
-3. **GenServer/GenStatem Metrics** (#3) - Next up!
+3. ✅ **GenServer/GenStatem Metrics** (#3) - COMPLETED
 
 ### Phase 2: Production Readiness (Short-term)
 4. **Distributed System Metrics** (#2)

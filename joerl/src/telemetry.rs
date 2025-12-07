@@ -38,6 +38,18 @@
 //! - `joerl_supervisor_restarts_total`: Total child restarts
 //! - `joerl_supervisor_restart_intensity_exceeded_total`: Times restart intensity was exceeded
 //!
+//! ### GenServers
+//! - `joerl_gen_server_call_duration_seconds`: Call duration histogram
+//! - `joerl_gen_server_casts_total`: Total casts sent
+//! - `joerl_gen_server_call_timeouts_total`: Total call timeouts
+//! - `joerl_gen_server_calls_in_flight`: Current number of calls in progress
+//!
+//! ### GenStatems
+//! - `joerl_gen_statem_transitions_total`: Total state transitions
+//! - `joerl_gen_statem_invalid_transitions_total`: Invalid transition attempts
+//! - `joerl_gen_statem_state_duration_seconds`: Time spent in each state
+//! - `joerl_gen_statem_current_state`: Current state of state machines
+//!
 //! ## Example
 //!
 //! ```rust,no_run
@@ -279,6 +291,183 @@ impl SupervisorMetrics {
     #[inline]
     pub fn restart_span() -> TelemetrySpan {
         TelemetrySpan::new("joerl_supervisor_restart_duration_seconds")
+    }
+}
+
+/// GenServer metrics.
+pub struct GenServerMetrics;
+
+impl GenServerMetrics {
+    /// Records a GenServer call with duration tracking.
+    #[inline]
+    pub fn call_span(server_type: &str) -> GenServerCallSpan {
+        GenServerCallSpan {
+            #[cfg(feature = "telemetry")]
+            start: Instant::now(),
+            #[cfg(feature = "telemetry")]
+            server_type: server_type.to_string(),
+        }
+    }
+
+    /// Records a GenServer cast.
+    #[inline]
+    pub fn cast(server_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_gen_server_casts_total", "type" => server_type.to_string()).increment(1);
+    }
+
+    /// Records a GenServer call timeout.
+    #[inline]
+    pub fn call_timeout(server_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_gen_server_call_timeouts_total", "type" => server_type.to_string())
+            .increment(1);
+    }
+
+    /// Updates the number of calls currently in flight.
+    #[inline]
+    pub fn calls_in_flight_inc(server_type: &str) {
+        #[cfg(feature = "telemetry")]
+        gauge!("joerl_gen_server_calls_in_flight", "type" => server_type.to_string())
+            .increment(1.0);
+    }
+
+    /// Decrements the number of calls currently in flight.
+    #[inline]
+    pub fn calls_in_flight_dec(server_type: &str) {
+        #[cfg(feature = "telemetry")]
+        gauge!("joerl_gen_server_calls_in_flight", "type" => server_type.to_string())
+            .decrement(1.0);
+    }
+}
+
+/// Span for tracking GenServer call duration.
+pub struct GenServerCallSpan {
+    #[cfg(feature = "telemetry")]
+    start: Instant,
+    #[cfg(feature = "telemetry")]
+    server_type: String,
+}
+
+impl GenServerCallSpan {
+    /// Records the call duration and finishes the span.
+    #[cfg(feature = "telemetry")]
+    pub fn finish(self) {
+        let duration = self.start.elapsed();
+        histogram!("joerl_gen_server_call_duration_seconds", "type" => self.server_type.clone())
+            .record(duration.as_secs_f64());
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    pub fn finish(self) {}
+}
+
+#[cfg(feature = "telemetry")]
+impl Drop for GenServerCallSpan {
+    fn drop(&mut self) {
+        let duration = self.start.elapsed();
+        histogram!("joerl_gen_server_call_duration_seconds", "type" => self.server_type.clone())
+            .record(duration.as_secs_f64());
+    }
+}
+
+/// GenStatem metrics.
+pub struct GenStatemMetrics;
+
+impl GenStatemMetrics {
+    /// Records a state transition.
+    #[inline]
+    pub fn state_transition(fsm_type: &str, from_state: &str, to_state: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!(
+            "joerl_gen_statem_transitions_total",
+            "type" => fsm_type.to_string(),
+            "from" => from_state.to_string(),
+            "to" => to_state.to_string()
+        )
+        .increment(1);
+    }
+
+    /// Records an invalid state transition attempt.
+    #[inline]
+    pub fn invalid_transition(fsm_type: &str, state: &str, event: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!(
+            "joerl_gen_statem_invalid_transitions_total",
+            "type" => fsm_type.to_string(),
+            "state" => state.to_string(),
+            "event" => event.to_string()
+        )
+        .increment(1);
+    }
+
+    /// Creates a span for tracking state duration.
+    #[inline]
+    pub fn state_duration_span(fsm_type: &str, state: &str) -> GenStatemStateSpan {
+        GenStatemStateSpan {
+            #[cfg(feature = "telemetry")]
+            start: Instant::now(),
+            #[cfg(feature = "telemetry")]
+            fsm_type: fsm_type.to_string(),
+            #[cfg(feature = "telemetry")]
+            state: state.to_string(),
+        }
+    }
+
+    /// Updates the current state gauge.
+    #[inline]
+    pub fn current_state(fsm_type: &str, state: &str) {
+        #[cfg(feature = "telemetry")]
+        {
+            // Use state name as a label for tracking
+            gauge!("joerl_gen_statem_current_state",
+                "type" => fsm_type.to_string(),
+                "state" => state.to_string()
+            )
+            .set(1.0);
+        }
+    }
+}
+
+/// Span for tracking GenStatem state duration.
+pub struct GenStatemStateSpan {
+    #[cfg(feature = "telemetry")]
+    start: Instant,
+    #[cfg(feature = "telemetry")]
+    fsm_type: String,
+    #[cfg(feature = "telemetry")]
+    state: String,
+}
+
+impl GenStatemStateSpan {
+    /// Records the state duration and finishes the span.
+    #[cfg(feature = "telemetry")]
+    pub fn finish(self) {
+        let duration = self.start.elapsed();
+        histogram!(
+            "joerl_gen_statem_state_duration_seconds",
+            "type" => self.fsm_type.clone(),
+            "state" => self.state.clone()
+        )
+        .record(duration.as_secs_f64());
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    pub fn finish(self) {}
+}
+
+#[cfg(feature = "telemetry")]
+impl Drop for GenStatemStateSpan {
+    fn drop(&mut self) {
+        let duration = self.start.elapsed();
+        histogram!(
+            "joerl_gen_statem_state_duration_seconds",
+            "type" => self.fsm_type.clone(),
+            "state" => self.state.clone()
+        )
+        .record(duration.as_secs_f64());
     }
 }
 

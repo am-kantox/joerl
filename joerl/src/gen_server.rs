@@ -127,6 +127,7 @@ use crate::{
     message::{ExitReason, Message},
     pid::Pid,
     system::{ActorRef, ActorSystem},
+    telemetry::{GenServerMetrics, actor_type_name},
 };
 use async_trait::async_trait;
 use std::fmt::Debug;
@@ -272,13 +273,16 @@ enum GenServerMsg<G: GenServer> {
 struct GenServerActor<G: GenServer> {
     server: G,
     state: Option<G::State>,
+    server_type: &'static str,
 }
 
 impl<G: GenServer> GenServerActor<G> {
     fn new(server: G) -> Self {
+        let server_type = actor_type_name::<G>();
         Self {
             server,
             state: None,
+            server_type,
         }
     }
 }
@@ -303,10 +307,16 @@ impl<G: GenServer> Actor for GenServerActor<G> {
         if let Ok(gen_msg) = msg.downcast::<GenServerMsg<G>>() {
             match *gen_msg {
                 GenServerMsg::Call { request, reply_tx } => {
+                    let _span = GenServerMetrics::call_span(self.server_type);
+                    GenServerMetrics::calls_in_flight_inc(self.server_type);
+
                     let reply = self.server.handle_call(request, state, &mut gen_ctx).await;
                     let _ = reply_tx.send(reply); // Ignore send errors (caller may have cancelled)
+
+                    GenServerMetrics::calls_in_flight_dec(self.server_type);
                 }
                 GenServerMsg::Cast { message } => {
+                    GenServerMetrics::cast(self.server_type);
                     self.server.handle_cast(message, state, &mut gen_ctx).await;
                 }
                 GenServerMsg::Info { message } => {

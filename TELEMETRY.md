@@ -99,6 +99,30 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 
 **Strategy labels**: `one_for_one`, `one_for_all`, `rest_for_one`
 
+### GenServer Operations
+
+| Metric | Type | Description | Labels |
+|--------|------|-------------|--------|
+| `joerl_gen_server_call_duration_seconds` | Histogram | Synchronous call latency | `type` |
+| `joerl_gen_server_casts_total` | Counter | Total casts sent | `type` |
+| `joerl_gen_server_call_timeouts_total` | Counter | Total call timeouts | `type` |
+| `joerl_gen_server_calls_in_flight` | Gauge | Current calls in progress | `type` |
+
+**Type labels**: GenServer struct name (e.g., `"Counter"`, `"WorkerServer"`)
+
+### GenStatem Operations
+
+| Metric | Type | Description | Labels |
+|--------|------|-------------|--------|
+| `joerl_gen_statem_transitions_total` | Counter | Total state transitions | `type`, `from`, `to` |
+| `joerl_gen_statem_invalid_transitions_total` | Counter | Invalid transition attempts | `type`, `state`, `event` |
+| `joerl_gen_statem_state_duration_seconds` | Histogram | Time spent in each state | `type`, `state` |
+| `joerl_gen_statem_current_state` | Gauge | Current state of FSMs | `type`, `state` |
+
+**Type labels**: GenStatem struct name (e.g., `"Door"`, `"Connection"`)
+
+**State/Event labels**: Debug representation of state/event enums (e.g., `"Locked"`, `"Open"`)
+
 ## Integration Examples
 
 ### Prometheus
@@ -212,6 +236,37 @@ topk(5, joerl_mailbox_utilization_percent by (type))
 
 # Mailbox backpressure events by actor type
 rate(joerl_mailbox_full_total[5m]) by (type)
+
+# GenServer average call latency by type
+rate(joerl_gen_server_call_duration_seconds_sum[1m]) /
+rate(joerl_gen_server_call_duration_seconds_count[1m]) by (type)
+
+# GenServer call latency percentiles (p50, p95, p99)
+histogram_quantile(0.50, rate(joerl_gen_server_call_duration_seconds_bucket[5m])) by (type)
+histogram_quantile(0.95, rate(joerl_gen_server_call_duration_seconds_bucket[5m])) by (type)
+histogram_quantile(0.99, rate(joerl_gen_server_call_duration_seconds_bucket[5m])) by (type)
+
+# GenServer calls in progress
+joerl_gen_server_calls_in_flight by (type)
+
+# GenServer cast throughput
+rate(joerl_gen_server_casts_total[1m]) by (type)
+
+# GenStatem state transition rate
+rate(joerl_gen_statem_transitions_total[1m]) by (type, from, to)
+
+# GenStatem most common state transitions
+topk(10, rate(joerl_gen_statem_transitions_total[5m]) by (type, from, to))
+
+# GenStatem average time in each state
+rate(joerl_gen_statem_state_duration_seconds_sum[5m]) /
+rate(joerl_gen_statem_state_duration_seconds_count[5m]) by (type, state)
+
+# GenStatem current state distribution
+joerl_gen_statem_current_state by (type, state)
+
+# GenStatem invalid transitions (potential bugs)
+rate(joerl_gen_statem_invalid_transitions_total[5m]) by (type, state, event)
 ```
 
 ### Datadog
