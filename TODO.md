@@ -4,18 +4,21 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## 🔴 Critical Missing Features
 
-### 1. Actor-Level Labels/Metadata ✅ IN PROGRESS
-**Status**: In progress  
+### 1. Actor-Level Labels/Metadata ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Immediate  
 **Value**: Debug specific actor types, identify which actors consume most resources
 
 **Implementation**:
-- [ ] Add `ActorMetadata` struct with `actor_type` and optional `actor_name`
-- [ ] Modify `ActorMetrics::actor_spawned()` to accept metadata
-- [ ] Add labels to all actor lifecycle metrics
-- [ ] Update `ActorSystem::spawn_internal()` to pass actor type
-- [ ] Add helper macro or trait for auto-deriving actor type names
-- [ ] Update documentation and examples
+- [x] Add `actor_type` tracking to ActorEntry
+- [x] Add `actor_type_name<T>()` helper function to extract type names
+- [x] Add `*_typed()` variants to ActorMetrics for type-labeled metrics
+- [x] Add labels to all actor lifecycle metrics
+- [x] Update `ActorSystem::spawn_internal()` to capture and store actor type
+- [x] Update `cleanup_actor()` and panic handler to use actor type
+- [x] Update documentation with new labels and example queries
+
+**Result**: All actor lifecycle metrics now include `type` label enabling per-actor-type observability.
 
 **Metrics to label**:
 - `joerl_actors_spawned_total` → add `type` label
@@ -194,8 +197,8 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## Progress Summary
 
-- **Completed**: 0/12
-- **In Progress**: 1/12
+- **Completed**: 1/12 (8.3%)
+- **In Progress**: 0/12
 - **Not Started**: 11/12
 
 ---
