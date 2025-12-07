@@ -100,6 +100,7 @@ pub mod gen_statem;
 pub mod mailbox;
 pub mod message;
 pub mod pid;
+pub mod serialization;
 pub mod supervisor;
 pub mod system;
 
