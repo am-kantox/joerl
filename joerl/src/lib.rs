@@ -103,6 +103,7 @@ pub mod pid;
 pub mod serialization;
 pub mod supervisor;
 pub mod system;
+pub mod telemetry;
 
 // Re-export commonly used types
 pub use actor::{Actor, ActorContext};

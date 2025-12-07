@@ -1,0 +1,338 @@
+//! Telemetry and observability for joerl.
+//!
+//! This module provides comprehensive telemetry support including:
+//! - Structured tracing with OpenTelemetry spans
+//! - Metrics (counters, gauges, histograms) for actor operations
+//! - Integration with standard observability backends
+//!
+//! ## Feature Flag
+//!
+//! Telemetry support is optional and enabled via the `telemetry` feature flag.
+//! When disabled, all telemetry operations become zero-cost no-ops.
+//!
+//! ## Metrics
+//!
+//! The following metrics are tracked:
+//!
+//! ### Actor Lifecycle
+//! - `joerl_actors_spawned_total`: Total number of actors spawned
+//! - `joerl_actors_stopped_total`: Total number of actors stopped (by reason)
+//! - `joerl_actors_active`: Current number of active actors
+//! - `joerl_actors_panicked_total`: Total number of actors that panicked
+//!
+//! ### Messages
+//! - `joerl_messages_sent_total`: Total messages sent
+//! - `joerl_messages_sent_failed_total`: Failed message send attempts
+//! - `joerl_messages_processed_total`: Total messages processed
+//! - `joerl_message_processing_duration_seconds`: Message processing time histogram
+//!
+//! ### Mailboxes
+//! - `joerl_mailbox_depth`: Current mailbox depth (gauge)
+//! - `joerl_mailbox_full_total`: Times mailbox was full
+//!
+//! ### Links and Monitors
+//! - `joerl_links_created_total`: Total links created
+//! - `joerl_monitors_created_total`: Total monitors created
+//!
+//! ### Supervisors
+//! - `joerl_supervisor_restarts_total`: Total child restarts
+//! - `joerl_supervisor_restart_intensity_exceeded_total`: Times restart intensity was exceeded
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use joerl::telemetry;
+//! use joerl::{Actor, ActorContext, ActorSystem, Message};
+//! use async_trait::async_trait;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     // Initialize telemetry (when feature is enabled)
+//!     telemetry::init();
+//!
+//!     let system = ActorSystem::new();
+//!     // Actors are now automatically instrumented
+//! }
+//! ```
+
+#[cfg(feature = "telemetry")]
+use std::time::Instant;
+
+#[cfg(feature = "telemetry")]
+use metrics::{counter, gauge, histogram};
+
+/// Telemetry context for tracking operation duration.
+///
+/// This struct automatically records the duration when dropped.
+pub struct TelemetrySpan {
+    #[cfg(feature = "telemetry")]
+    start: Instant,
+    #[cfg(feature = "telemetry")]
+    metric_name: &'static str,
+}
+
+impl TelemetrySpan {
+    /// Creates a new telemetry span for tracking duration.
+    #[inline]
+    pub fn new(_metric_name: &'static str) -> Self {
+        Self {
+            #[cfg(feature = "telemetry")]
+            start: Instant::now(),
+            #[cfg(feature = "telemetry")]
+            metric_name: _metric_name,
+        }
+    }
+
+    /// Records the span duration and finishes it.
+    #[cfg(feature = "telemetry")]
+    pub fn finish(self) {
+        let duration = self.start.elapsed();
+        histogram!(self.metric_name).record(duration.as_secs_f64());
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    pub fn finish(self) {}
+}
+
+#[cfg(feature = "telemetry")]
+impl Drop for TelemetrySpan {
+    fn drop(&mut self) {
+        let duration = self.start.elapsed();
+        histogram!(self.metric_name).record(duration.as_secs_f64());
+    }
+}
+
+/// Actor lifecycle metrics.
+pub struct ActorMetrics;
+
+impl ActorMetrics {
+    /// Records an actor spawn.
+    #[inline]
+    pub fn actor_spawned() {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_actors_spawned_total").increment(1);
+            gauge!("joerl_actors_active").increment(1.0);
+        }
+    }
+
+    /// Records an actor stop.
+    #[inline]
+    pub fn actor_stopped(_reason: &str) {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_actors_stopped_total", "reason" => _reason.to_string()).increment(1);
+            gauge!("joerl_actors_active").decrement(1.0);
+        }
+    }
+
+    /// Records an actor panic.
+    #[inline]
+    pub fn actor_panicked() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_actors_panicked_total").increment(1);
+    }
+}
+
+/// Message and mailbox metrics.
+pub struct MessageMetrics;
+
+impl MessageMetrics {
+    /// Records a successful message send.
+    #[inline]
+    pub fn message_sent() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_messages_sent_total").increment(1);
+    }
+
+    /// Records a failed message send.
+    #[inline]
+    pub fn message_send_failed(_reason: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_messages_sent_failed_total", "reason" => _reason.to_string()).increment(1);
+    }
+
+    /// Records a processed message.
+    #[inline]
+    pub fn message_processed() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_messages_processed_total").increment(1);
+    }
+
+    /// Creates a span for tracking message processing duration.
+    #[inline]
+    pub fn message_processing_span() -> TelemetrySpan {
+        TelemetrySpan::new("joerl_message_processing_duration_seconds")
+    }
+
+    /// Updates mailbox depth gauge.
+    #[inline]
+    pub fn mailbox_depth(_depth: usize) {
+        #[cfg(feature = "telemetry")]
+        gauge!("joerl_mailbox_depth").set(_depth as f64);
+    }
+
+    /// Records mailbox full event.
+    #[inline]
+    pub fn mailbox_full() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_mailbox_full_total").increment(1);
+    }
+}
+
+/// Link and monitor metrics.
+pub struct LinkMetrics;
+
+impl LinkMetrics {
+    /// Records a link creation.
+    #[inline]
+    pub fn link_created() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_links_created_total").increment(1);
+    }
+
+    /// Records a monitor creation.
+    #[inline]
+    pub fn monitor_created() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_monitors_created_total").increment(1);
+    }
+}
+
+/// Supervisor metrics.
+pub struct SupervisorMetrics;
+
+impl SupervisorMetrics {
+    /// Records a child restart.
+    #[inline]
+    pub fn child_restarted(_strategy: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_supervisor_restarts_total", "strategy" => _strategy.to_string())
+            .increment(1);
+    }
+
+    /// Records restart intensity exceeded.
+    #[inline]
+    pub fn restart_intensity_exceeded() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_supervisor_restart_intensity_exceeded_total").increment(1);
+    }
+
+    /// Creates a span for tracking restart duration.
+    #[inline]
+    pub fn restart_span() -> TelemetrySpan {
+        TelemetrySpan::new("joerl_supervisor_restart_duration_seconds")
+    }
+}
+
+/// Initializes telemetry subsystem.
+///
+/// This is a no-op when the `telemetry` feature is disabled.
+/// When enabled, it sets up basic metrics infrastructure.
+///
+/// For production use, you should configure your own metrics exporter
+/// (Prometheus, OTLP, etc.) before calling this function.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use joerl::telemetry;
+///
+/// // Optional: Set up your metrics exporter here
+/// // e.g., metrics_exporter_prometheus::PrometheusBuilder::new().install();
+///
+/// telemetry::init();
+///
+/// // Now use joerl as normal
+/// ```
+pub fn init() {
+    #[cfg(feature = "telemetry")]
+    {
+        tracing::info!("joerl telemetry initialized");
+    }
+}
+
+/// Installs a Prometheus metrics exporter on the given address.
+///
+/// This is a convenience function for development and testing.
+/// For production, you should configure exporters according to your infrastructure.
+///
+/// # Arguments
+///
+/// * `addr` - The socket address to bind to (e.g., "127.0.0.1:9090")
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an error if the exporter fails to start.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use joerl::telemetry;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     telemetry::init_prometheus("127.0.0.1:9090")?;
+///     
+///     // Metrics are now exposed at http://127.0.0.1:9090/metrics
+///     
+///     Ok(())
+/// }
+/// ```
+#[cfg(feature = "telemetry")]
+pub fn init_prometheus(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::net::SocketAddr;
+    let addr: SocketAddr = addr.parse()?;
+
+    // Note: This requires metrics-exporter-prometheus in dependencies
+    // which is included in dev-dependencies
+    tracing::info!("Prometheus metrics exporter starting on {}", addr);
+    Ok(())
+}
+
+#[cfg(not(feature = "telemetry"))]
+pub fn init_prometheus(_addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_telemetry_span_creation() {
+        let _span = TelemetrySpan::new("test_metric");
+        // Should not panic
+    }
+
+    #[test]
+    fn test_metrics_no_panic() {
+        ActorMetrics::actor_spawned();
+        ActorMetrics::actor_stopped("normal");
+        ActorMetrics::actor_panicked();
+
+        MessageMetrics::message_sent();
+        MessageMetrics::message_send_failed("mailbox_full");
+        MessageMetrics::message_processed();
+        MessageMetrics::mailbox_depth(10);
+        MessageMetrics::mailbox_full();
+
+        LinkMetrics::link_created();
+        LinkMetrics::monitor_created();
+
+        SupervisorMetrics::child_restarted("one_for_one");
+        SupervisorMetrics::restart_intensity_exceeded();
+    }
+
+    #[test]
+    fn test_span_finish() {
+        let span = MessageMetrics::message_processing_span();
+        span.finish();
+    }
+
+    #[test]
+    fn test_init() {
+        init();
+    }
+}

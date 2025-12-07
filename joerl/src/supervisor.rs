@@ -50,6 +50,7 @@ use crate::Pid;
 use crate::actor::{Actor, ActorContext};
 use crate::message::{ExitReason, Message, Signal};
 use crate::system::{ActorRef, ActorSystem};
+use crate::telemetry::SupervisorMetrics;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -478,6 +479,8 @@ impl Supervisor {
 
     /// Restarts a single child.
     async fn restart_child(&mut self, child_id: &str, ctx: &mut ActorContext) {
+        let _span = SupervisorMetrics::restart_span();
+
         if let Some(child) = self.children.get_mut(child_id) {
             // Check restart intensity
             let now = Instant::now();
@@ -489,6 +492,7 @@ impl Supervisor {
                     "Child {} exceeded restart intensity, stopping supervisor",
                     child_id
                 );
+                SupervisorMetrics::restart_intensity_exceeded();
                 ctx.stop(ExitReason::Custom(format!(
                     "restart intensity exceeded for {}",
                     child_id
@@ -507,6 +511,15 @@ impl Supervisor {
             let _ = actor_ref.monitor(ctx.pid());
 
             child.pid = new_pid;
+
+            // Record restart telemetry
+            let strategy_str = match self.strategy {
+                RestartStrategy::OneForOne => "one_for_one",
+                RestartStrategy::OneForAll => "one_for_all",
+                RestartStrategy::RestForOne => "rest_for_one",
+            };
+            SupervisorMetrics::child_restarted(strategy_str);
+
             tracing::info!("Restarted child {} with new pid {}", child_id, new_pid);
         }
     }

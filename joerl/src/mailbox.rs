@@ -4,6 +4,7 @@
 //! bounded to provide backpressure and prevent memory exhaustion.
 
 use crate::message::Envelope;
+use crate::telemetry::MessageMetrics;
 use tokio::sync::mpsc;
 
 /// Default mailbox capacity.
@@ -61,7 +62,14 @@ impl MailboxSender {
         &self,
         envelope: Envelope,
     ) -> Result<(), mpsc::error::SendError<Envelope>> {
-        self.tx.send(envelope).await
+        let result = self.tx.send(envelope).await;
+
+        // Update mailbox depth gauge
+        if result.is_ok() {
+            MessageMetrics::mailbox_depth(self.len());
+        }
+
+        result
     }
 
     /// Tries to send a message without blocking.
@@ -71,7 +79,15 @@ impl MailboxSender {
         &self,
         envelope: Envelope,
     ) -> Result<(), mpsc::error::TrySendError<Envelope>> {
-        self.tx.try_send(envelope)
+        let result = self.tx.try_send(envelope);
+
+        match &result {
+            Ok(_) => MessageMetrics::mailbox_depth(self.len()),
+            Err(mpsc::error::TrySendError::Full(_)) => MessageMetrics::mailbox_full(),
+            _ => {}
+        }
+
+        result
     }
 
     /// Returns true if the mailbox is closed.

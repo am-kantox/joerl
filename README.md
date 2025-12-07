@@ -15,6 +15,7 @@ An Erlang-inspired actor model library for Rust, named in tribute to [Joe Armstr
 - 🔗 **Links & Monitors**: Actor relationships for failure detection and propagation
 - 📬 **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
 - ⚡ **Async/Await**: Built on tokio for excellent performance
+- 📊 **Telemetry & Observability**: Comprehensive metrics and tracing with Prometheus/OpenTelemetry support
 - 🦀 **Erlang Conventions**: Familiar API for Erlang/OTP developers
 
 ## Installation
@@ -323,6 +324,7 @@ See the [`examples/`](examples/) directory for more examples:
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
 - **`panic_handling.rs` - Comprehensive panic handling demonstration (Erlang/OTP-style)**
+- **`telemetry_demo.rs` - Telemetry and metrics with Prometheus export**
 - `remote_actors.rs` - Distributed actors conceptual foundation
 - `distributed_chat.rs` - Multi-node chat system over TCP
 
@@ -360,6 +362,51 @@ This example shows:
 
 For detailed documentation on building distributed systems with joerl, see [DISTRIBUTED.md](DISTRIBUTED.md).
 
+## Telemetry and Observability
+
+joerl provides comprehensive telemetry support for production monitoring:
+
+```toml
+[dependencies]
+joerl = { version = "0.4", features = ["telemetry"] }
+```
+
+```rust
+use joerl::telemetry;
+use metrics_exporter_prometheus::PrometheusBuilder;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up Prometheus exporter
+    PrometheusBuilder::new()
+        .with_http_listener(([127, 0, 0, 1], 9090))
+        .install()?;
+    
+    telemetry::init();
+    
+    // Metrics automatically tracked:
+    // - Actor spawns, stops, panics
+    // - Message throughput and latency
+    // - Mailbox depth and backpressure
+    // - Supervisor restarts
+    
+    let system = ActorSystem::new();
+    // ... your code
+    
+    Ok(())
+}
+```
+
+**Available Metrics:**
+- `joerl_actors_spawned_total` - Total actors spawned
+- `joerl_actors_active` - Current active actors
+- `joerl_messages_sent_total` - Message throughput
+- `joerl_message_processing_duration_seconds` - Processing latency
+- `joerl_supervisor_restarts_total` - Supervisor restart events
+- And more...
+
+See [TELEMETRY.md](TELEMETRY.md) for comprehensive documentation and integration examples with Prometheus, Grafana, OpenTelemetry, and Datadog.
+
 ## Architecture
 
 The library is organized into several modules:
@@ -369,6 +416,7 @@ The library is organized into several modules:
 - `message` - Message types and signals
 - `mailbox` - Bounded mailbox implementation
 - `supervisor` - Supervision trees and restart strategies
+- `telemetry` - Metrics and observability (optional)
 - `error` - Error types and results
 - `pid` - Process identifier
 

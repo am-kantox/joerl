@@ -11,6 +11,7 @@ use crate::actor::{Actor, ActorContext};
 use crate::error::{ActorError, Result};
 use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox, MailboxSender};
 use crate::message::{Envelope, ExitReason, Message, MonitorRef, Signal};
+use crate::telemetry::{ActorMetrics, LinkMetrics, MessageMetrics};
 use dashmap::DashMap;
 use futures::FutureExt;
 use std::collections::HashSet;
@@ -393,6 +394,9 @@ impl ActorSystem {
         };
         self.actors.insert(pid, entry);
 
+        // Telemetry: record actor spawn
+        ActorMetrics::actor_spawned();
+
         let system = Arc::clone(self);
         let join_handle = tokio::spawn(async move {
             // Wrap the entire actor execution in catch_unwind to handle panics
@@ -404,7 +408,9 @@ impl ActorSystem {
                 let exit_reason = loop {
                     match ctx.recv().await {
                         Some(Envelope::Message(msg)) => {
+                            let _span = MessageMetrics::message_processing_span();
                             actor.handle_message(msg, &mut ctx).await;
+                            MessageMetrics::message_processed();
                         }
                         Some(Envelope::Signal(signal)) => {
                             actor.handle_signal(signal, &mut ctx).await;
@@ -439,6 +445,7 @@ impl ActorSystem {
                 };
 
                 tracing::error!("Actor {} panicked: {}", pid, panic_msg);
+                ActorMetrics::actor_panicked();
                 ExitReason::Panic(panic_msg)
             });
 
@@ -457,7 +464,7 @@ impl ActorSystem {
 
     /// Sends a message to an actor.
     pub async fn send(&self, to: Pid, msg: Message) -> Result<()> {
-        if let Some(entry) = self.actors.get(&to) {
+        let result = if let Some(entry) = self.actors.get(&to) {
             entry
                 .sender
                 .send(Envelope::message(msg))
@@ -465,19 +472,41 @@ impl ActorSystem {
                 .map_err(|_| ActorError::SendFailed(to))
         } else {
             Err(ActorError::ActorNotFound(to))
+        };
+
+        match &result {
+            Ok(_) => MessageMetrics::message_sent(),
+            Err(ActorError::SendFailed(_)) => MessageMetrics::message_send_failed("mailbox_full"),
+            Err(ActorError::ActorNotFound(_)) => {
+                MessageMetrics::message_send_failed("actor_not_found")
+            }
+            _ => {}
         }
+
+        result
     }
 
     /// Attempts to send a message without blocking.
     pub fn try_send(&self, to: Pid, msg: Message) -> Result<()> {
-        if let Some(entry) = self.actors.get(&to) {
+        let result = if let Some(entry) = self.actors.get(&to) {
             entry
                 .sender
                 .try_send(Envelope::message(msg))
                 .map_err(|_| ActorError::SendFailed(to))
         } else {
             Err(ActorError::ActorNotFound(to))
+        };
+
+        match &result {
+            Ok(_) => MessageMetrics::message_sent(),
+            Err(ActorError::SendFailed(_)) => MessageMetrics::message_send_failed("mailbox_full"),
+            Err(ActorError::ActorNotFound(_)) => {
+                MessageMetrics::message_send_failed("actor_not_found")
+            }
+            _ => {}
         }
+
+        result
     }
 
     /// Sends a signal to an actor.
@@ -545,6 +574,7 @@ impl ActorSystem {
             return Err(ActorError::ActorNotFound(pid2));
         }
 
+        LinkMetrics::link_created();
         Ok(())
     }
 
@@ -594,12 +624,18 @@ impl ActorSystem {
     pub fn monitor(&self, from: Pid, to: Pid) -> Result<MonitorRef> {
         let monitor_ref = MonitorRef::new(MONITOR_COUNTER.fetch_add(1, Ordering::Relaxed));
 
-        if let Some(mut entry) = self.actors.get_mut(&to) {
+        let result = if let Some(mut entry) = self.actors.get_mut(&to) {
             entry.monitors.insert((from, monitor_ref));
             Ok(monitor_ref)
         } else {
             Err(ActorError::ActorNotFound(to))
+        };
+
+        if result.is_ok() {
+            LinkMetrics::monitor_created();
         }
+
+        result
     }
 
     /// Returns true if an actor with the given Pid exists and is running.
@@ -637,6 +673,16 @@ impl ActorSystem {
 
     /// Cleans up an actor after termination.
     async fn cleanup_actor(&self, pid: Pid, reason: &ExitReason) {
+        // Telemetry: record actor stop
+        let reason_str = match reason {
+            ExitReason::Normal => "normal",
+            ExitReason::Shutdown => "shutdown",
+            ExitReason::Killed => "killed",
+            ExitReason::Panic(_) => "panic",
+            ExitReason::Custom(_) => "custom",
+        };
+        ActorMetrics::actor_stopped(reason_str);
+
         let (links, monitors) = if let Some((_, entry)) = self.actors.remove(&pid) {
             (entry.links, entry.monitors)
         } else {
