@@ -56,6 +56,8 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 | `joerl_actors_stopped_total` | Counter | Total actors stopped | `type`, `reason` |
 | `joerl_actors_active` | Gauge | Current number of active actors | `type` |
 | `joerl_actors_panicked_total` | Counter | Total actors that panicked | `type` |
+| `joerl_actor_lifetime_seconds` | Histogram | Actor lifetime duration | `type` |
+| `joerl_short_lived_actors_total` | Counter | Actors that lived < 1 second | `type` |
 
 **Type labels**: Actor struct name (e.g., `"Worker"`, `"Supervisor"`, `"boxed"` for dynamically spawned actors)
 
@@ -122,6 +124,19 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 **Type labels**: GenStatem struct name (e.g., `"Door"`, `"Connection"`)
 
 **State/Event labels**: Debug representation of state/event enums (e.g., `"Locked"`, `"Open"`)
+
+### Signal Operations
+
+| Metric | Type | Description | Labels |
+|--------|------|-------------|--------|
+| `joerl_signals_sent_total` | Counter | Total signals sent | `type` |
+| `joerl_signals_received_total` | Counter | Total signals received | `type` |
+| `joerl_signals_ignored_total` | Counter | Signals ignored (trapped) | `type` |
+| `joerl_exit_signals_by_reason_total` | Counter | Exit signals by reason | `reason` |
+
+**Signal type labels**: `exit`, `down`, `stop`, `kill`
+
+**Reason labels**: `normal`, `shutdown`, `killed`, `panic`, `custom`
 
 ## Integration Examples
 
@@ -267,6 +282,40 @@ joerl_gen_statem_current_state by (type, state)
 
 # GenStatem invalid transitions (potential bugs)
 rate(joerl_gen_statem_invalid_transitions_total[5m]) by (type, state, event)
+
+# Actor average lifetime by type
+rate(joerl_actor_lifetime_seconds_sum[5m]) /
+rate(joerl_actor_lifetime_seconds_count[5m]) by (type)
+
+# Actor lifetime percentiles (p50, p95, p99)
+histogram_quantile(0.50, rate(joerl_actor_lifetime_seconds_bucket[5m])) by (type)
+histogram_quantile(0.95, rate(joerl_actor_lifetime_seconds_bucket[5m])) by (type)
+histogram_quantile(0.99, rate(joerl_actor_lifetime_seconds_bucket[5m])) by (type)
+
+# Short-lived actors (potential restart loops)
+rate(joerl_short_lived_actors_total[5m]) by (type)
+
+# Actors with highest short-lived rate (restart issues)
+topk(5, rate(joerl_short_lived_actors_total[5m]) by (type))
+
+# Signal sending rate by type
+rate(joerl_signals_sent_total[1m]) by (type)
+
+# Signal receiving rate by type
+rate(joerl_signals_received_total[1m]) by (type)
+
+# Ignored signal rate (trapped exits)
+rate(joerl_signals_ignored_total[1m]) by (type)
+
+# Exit signal breakdown by reason
+rate(joerl_exit_signals_by_reason_total[5m]) by (reason)
+
+# Most common exit reasons
+topk(5, rate(joerl_exit_signals_by_reason_total[5m]) by (reason))
+
+# Signal ignore ratio (trapped vs total)
+rate(joerl_signals_ignored_total[5m]) /
+(rate(joerl_signals_received_total[5m]) + 0.001)
 ```
 
 ### Datadog
@@ -307,6 +356,8 @@ Monitor critical metrics:
 - **Mailbox backpressure**: `joerl_mailbox_full_total` increasing
 - **High panic rate**: `rate(joerl_actors_panicked_total[5m]) > 0`
 - **Message send failures**: `rate(joerl_messages_sent_failed_total[1m]) > 100`
+- **Restart loops**: `rate(joerl_short_lived_actors_total[5m]) > 5`
+- **Abnormal exit signals**: `rate(joerl_exit_signals_by_reason_total{reason!="normal"}[5m]) > 10`
 
 ### 3. Use Dashboards
 

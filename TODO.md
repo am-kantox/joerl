@@ -112,28 +112,57 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ---
 
-### 5. Signal-Specific Metrics
-**Status**: Not started  
+### 5. Signal-Specific Metrics ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Short-term  
 **Value**: Debug supervision trees, understand failure propagation patterns
 
-**Metrics to add**:
-- `joerl_signals_sent_total{signal_type}` (exit, down, stop, kill)
-- `joerl_signals_received_total{signal_type}`
-- `joerl_signals_ignored_total{signal_type}` (when trap_exit=true)
-- `joerl_exit_signals_by_reason{reason}` (breakdown of exit reasons)
+**Implementation**:
+- [x] Add `SignalMetrics` struct to telemetry module
+- [x] Track signal sending in `send_signal()` with type labels
+- [x] Track signal reception in actor message loop
+- [x] Detect and track trapped/ignored signals
+- [x] Track exit signal reasons separately
+- [x] Update TELEMETRY.md with signal metrics and queries
+
+**Result**: Complete signal observability for debugging supervision trees and failure propagation.
+
+**Metrics added**:
+- `joerl_signals_sent_total{type}` - exit, down, stop, kill
+- `joerl_signals_received_total{type}`
+- `joerl_signals_ignored_total{type}` - tracked when trap_exit=true
+- `joerl_exit_signals_by_reason_total{reason}` - normal, shutdown, killed, panic, custom
+
+**Files modified**:
+- `joerl/src/telemetry.rs` - Added SignalMetrics struct
+- `joerl/src/system.rs` - Instrumented send_signal() and signal reception
+- `TELEMETRY.md` - Added metrics table and PromQL queries
 
 ---
 
-### 6. Actor Lifetime Statistics
-**Status**: Not started  
+### 6. Actor Lifetime Statistics ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Short-term  
 **Value**: Identify actors that die too quickly (restart loops) or leak (never die)
 
-**Metrics to add**:
-- `joerl_actor_lifetime_seconds{actor_type}` (histogram)
-- `joerl_actor_lifetime_total_seconds{actor_type}` (cumulative)
-- `joerl_short_lived_actors_total{actor_type}` (lived < 1s)
+**Implementation**:
+- [x] Add `spawn_time` field to ActorEntry (conditional on telemetry feature)
+- [x] Track spawn time on actor creation
+- [x] Calculate lifetime duration in cleanup_actor()
+- [x] Add `actor_lifetime()` method to ActorMetrics
+- [x] Automatically detect short-lived actors (< 1s)
+- [x] Update TELEMETRY.md with lifetime metrics and queries
+
+**Result**: Complete actor lifetime tracking for identifying restart loops and performance issues.
+
+**Metrics added**:
+- `joerl_actor_lifetime_seconds{type}` - histogram of actor lifetimes
+- `joerl_short_lived_actors_total{type}` - counter for actors < 1s (restart loops)
+
+**Files modified**:
+- `joerl/src/system.rs` - Added spawn_time tracking and lifetime calculation
+- `joerl/src/telemetry.rs` - Added actor_lifetime() method
+- `TELEMETRY.md` - Added metrics table and PromQL queries
 
 ---
 
@@ -220,9 +249,9 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## Progress Summary
 
-- **Completed**: 3/12 (25%)
+- **Completed**: 5/12 (41.7%)
 - **In Progress**: 0/12
-- **Not Started**: 9/12
+- **Not Started**: 7/12
 
 ---
 
@@ -233,10 +262,10 @@ This document tracks planned enhancements to joerl's telemetry system.
 2. ✅ **Per-Actor Mailbox Tracking** (#4) - COMPLETED
 3. ✅ **GenServer/GenStatem Metrics** (#3) - COMPLETED
 
-### Phase 2: Production Readiness (Short-term)
-4. **Distributed System Metrics** (#2)
-5. **Signal-Specific Metrics** (#5)
-6. **Actor Lifetime Statistics** (#6)
+### Phase 2: Production Readiness (Short-term) ✅ COMPLETED (except #2)
+4. **Distributed System Metrics** (#2) - Requires distributed module implementation
+5. ✅ **Signal-Specific Metrics** (#5) - COMPLETED
+6. ✅ **Actor Lifetime Statistics** (#6) - COMPLETED
 
 ### Phase 3: Performance & Optimization (Medium-term)
 7. **Sampling Configuration** (#8)

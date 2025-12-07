@@ -11,7 +11,7 @@ use crate::actor::{Actor, ActorContext};
 use crate::error::{ActorError, Result};
 use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox, MailboxSender};
 use crate::message::{Envelope, ExitReason, Message, MonitorRef, Signal};
-use crate::telemetry::{ActorMetrics, LinkMetrics, MessageMetrics};
+use crate::telemetry::{ActorMetrics, LinkMetrics, MessageMetrics, SignalMetrics};
 use dashmap::DashMap;
 use futures::FutureExt;
 use std::collections::HashSet;
@@ -233,6 +233,8 @@ struct ActorEntry {
     links: HashSet<Pid>,
     monitors: HashSet<(Pid, MonitorRef)>, // (monitoring_pid, ref)
     actor_type: String,                   // Type name for telemetry
+    #[cfg(feature = "telemetry")]
+    spawn_time: std::time::Instant, // For lifetime tracking
 }
 
 /// The actor system runtime.
@@ -400,6 +402,8 @@ impl ActorSystem {
             links: HashSet::new(),
             monitors: HashSet::new(),
             actor_type: actor_type_owned.clone(),
+            #[cfg(feature = "telemetry")]
+            spawn_time: std::time::Instant::now(),
         };
         self.actors.insert(pid, entry);
 
@@ -423,6 +427,26 @@ impl ActorSystem {
                             MessageMetrics::message_processed();
                         }
                         Some(Envelope::Signal(signal)) => {
+                            // Telemetry: track signal reception
+                            let signal_type = match &signal {
+                                Signal::Exit { .. } => "exit",
+                                Signal::Down { .. } => "down",
+                                Signal::Stop => "stop",
+                                Signal::Kill => "kill",
+                            };
+                            SignalMetrics::signal_received(signal_type);
+
+                            // Check if signal will be ignored (trapped)
+                            let is_trapped = if let Signal::Exit { reason, .. } = &signal {
+                                ctx.is_trapping_exits() && reason.is_trappable()
+                            } else {
+                                false
+                            };
+
+                            if is_trapped {
+                                SignalMetrics::signal_ignored(signal_type);
+                            }
+
                             actor.handle_signal(signal, &mut ctx).await;
                         }
                         None => {
@@ -526,6 +550,28 @@ impl ActorSystem {
 
     /// Sends a signal to an actor.
     pub(crate) async fn send_signal(&self, to: Pid, signal: Signal) -> Result<()> {
+        // Telemetry: track signal sending
+        let signal_type = match &signal {
+            Signal::Exit { .. } => "exit",
+            Signal::Down { .. } => "down",
+            Signal::Stop => "stop",
+            Signal::Kill => "kill",
+        };
+
+        // Track exit reasons specifically
+        if let Signal::Exit { reason, .. } = &signal {
+            let reason_str = match reason {
+                ExitReason::Normal => "normal",
+                ExitReason::Shutdown => "shutdown",
+                ExitReason::Killed => "killed",
+                ExitReason::Panic(_) => "panic",
+                ExitReason::Custom(_) => "custom",
+            };
+            SignalMetrics::exit_signal_by_reason(reason_str);
+        }
+
+        SignalMetrics::signal_sent(signal_type);
+
         if let Some(entry) = self.actors.get(&to) {
             entry
                 .sender
@@ -688,12 +734,21 @@ impl ActorSystem {
 
     /// Cleans up an actor after termination.
     async fn cleanup_actor(&self, pid: Pid, reason: &ExitReason) {
-        // Get actor type and remove from registry
-        let (actor_type, links, monitors) = if let Some((_, entry)) = self.actors.remove(&pid) {
-            (entry.actor_type, entry.links, entry.monitors)
-        } else {
-            return;
-        };
+        // Get actor type, spawn time, and remove from registry
+        let (actor_type, links, monitors, spawn_time) =
+            if let Some((_, entry)) = self.actors.remove(&pid) {
+                (
+                    entry.actor_type,
+                    entry.links,
+                    entry.monitors,
+                    #[cfg(feature = "telemetry")]
+                    entry.spawn_time,
+                    #[cfg(not(feature = "telemetry"))]
+                    std::time::Instant::now(),
+                )
+            } else {
+                return;
+            };
 
         // Telemetry: record actor stop with type
         let reason_str = match reason {
@@ -704,6 +759,13 @@ impl ActorSystem {
             ExitReason::Custom(_) => "custom",
         };
         ActorMetrics::actor_stopped_typed(&actor_type, reason_str);
+
+        // Telemetry: record actor lifetime
+        #[cfg(feature = "telemetry")]
+        {
+            let lifetime = spawn_time.elapsed().as_secs_f64();
+            ActorMetrics::actor_lifetime(&actor_type, lifetime);
+        }
 
         // Send EXIT signals to linked actors
         for linked_pid in links {

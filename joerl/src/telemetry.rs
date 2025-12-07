@@ -19,6 +19,8 @@
 //! - `joerl_actors_stopped_total`: Total number of actors stopped (by reason)
 //! - `joerl_actors_active`: Current number of active actors
 //! - `joerl_actors_panicked_total`: Total number of actors that panicked
+//! - `joerl_actor_lifetime_seconds`: Actor lifetime duration histogram
+//! - `joerl_short_lived_actors_total`: Actors that lived < 1 second
 //!
 //! ### Messages
 //! - `joerl_messages_sent_total`: Total messages sent
@@ -49,6 +51,12 @@
 //! - `joerl_gen_statem_invalid_transitions_total`: Invalid transition attempts
 //! - `joerl_gen_statem_state_duration_seconds`: Time spent in each state
 //! - `joerl_gen_statem_current_state`: Current state of state machines
+//!
+//! ### Signals
+//! - `joerl_signals_sent_total`: Total signals sent
+//! - `joerl_signals_received_total`: Total signals received
+//! - `joerl_signals_ignored_total`: Signals ignored (trapped exits)
+//! - `joerl_exit_signals_by_reason_total`: Exit signals by reason
 //!
 //! ## Example
 //!
@@ -136,6 +144,23 @@ impl ActorMetrics {
         {
             counter!("joerl_actors_spawned_total", "type" => actor_type.to_string()).increment(1);
             gauge!("joerl_actors_active", "type" => actor_type.to_string()).increment(1.0);
+        }
+    }
+
+    /// Records actor lifetime statistics.
+    #[inline]
+    pub fn actor_lifetime(actor_type: &str, lifetime_secs: f64) {
+        #[cfg(feature = "telemetry")]
+        {
+            // Record lifetime histogram
+            histogram!("joerl_actor_lifetime_seconds", "type" => actor_type.to_string())
+                .record(lifetime_secs);
+
+            // Track short-lived actors (< 1 second)
+            if lifetime_secs < 1.0 {
+                counter!("joerl_short_lived_actors_total", "type" => actor_type.to_string())
+                    .increment(1);
+            }
         }
     }
 
@@ -369,6 +394,39 @@ impl Drop for GenServerCallSpan {
         let duration = self.start.elapsed();
         histogram!("joerl_gen_server_call_duration_seconds", "type" => self.server_type.clone())
             .record(duration.as_secs_f64());
+    }
+}
+
+/// Signal metrics.
+pub struct SignalMetrics;
+
+impl SignalMetrics {
+    /// Records a signal sent.
+    #[inline]
+    pub fn signal_sent(signal_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_signals_sent_total", "type" => signal_type.to_string()).increment(1);
+    }
+
+    /// Records a signal received by an actor.
+    #[inline]
+    pub fn signal_received(signal_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_signals_received_total", "type" => signal_type.to_string()).increment(1);
+    }
+
+    /// Records a signal that was ignored (trapped).
+    #[inline]
+    pub fn signal_ignored(signal_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_signals_ignored_total", "type" => signal_type.to_string()).increment(1);
+    }
+
+    /// Records an exit signal with its reason.
+    #[inline]
+    pub fn exit_signal_by_reason(reason: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_exit_signals_by_reason_total", "reason" => reason.to_string()).increment(1);
     }
 }
 
