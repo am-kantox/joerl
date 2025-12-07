@@ -76,8 +76,11 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
-| `joerl_mailbox_depth` | Gauge | Current mailbox queue depth | - |
-| `joerl_mailbox_full_total` | Counter | Times mailbox was full | - |
+| `joerl_mailbox_depth` | Gauge | Current mailbox queue depth | `type` |
+| `joerl_mailbox_utilization_percent` | Gauge | Mailbox utilization percentage (0-100) | `type` |
+| `joerl_mailbox_full_total` | Counter | Times mailbox was full | `type` |
+
+**Type labels**: Actor struct name (same as actor lifecycle metrics)
 
 ### Links and Monitors
 
@@ -200,6 +203,15 @@ rate(joerl_supervisor_restarts_total[5m])
 
 # Find actors with high panic rates
 topk(5, rate(joerl_actors_panicked_total[5m]) by (type))
+
+# Mailbox depth by actor type
+joerl_mailbox_depth by (type)
+
+# Actors with highest mailbox utilization
+topk(5, joerl_mailbox_utilization_percent by (type))
+
+# Mailbox backpressure events by actor type
+rate(joerl_mailbox_full_total[5m]) by (type)
 ```
 
 ### Datadog

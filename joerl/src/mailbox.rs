@@ -19,11 +19,21 @@ pub struct Mailbox {
 }
 
 impl Mailbox {
-    /// Creates a new mailbox with the specified capacity.
+    /// Creates a new mailbox (for testing).
+    #[cfg(test)]
     pub(crate) fn new(capacity: usize) -> (Self, MailboxSender) {
+        Self::new_with_type(capacity, "test".to_string())
+    }
+
+    /// Creates a new mailbox with actor type for telemetry.
+    pub(crate) fn new_with_type(capacity: usize, actor_type: String) -> (Self, MailboxSender) {
         let (tx, rx) = mpsc::channel(capacity);
         let mailbox = Mailbox { rx };
-        let sender = MailboxSender { tx };
+        let sender = MailboxSender {
+            tx,
+            actor_type,
+            capacity,
+        };
         (mailbox, sender)
     }
 
@@ -52,6 +62,8 @@ impl Mailbox {
 #[derive(Clone)]
 pub struct MailboxSender {
     tx: mpsc::Sender<Envelope>,
+    actor_type: String,
+    capacity: usize,
 }
 
 impl MailboxSender {
@@ -64,9 +76,9 @@ impl MailboxSender {
     ) -> Result<(), mpsc::error::SendError<Envelope>> {
         let result = self.tx.send(envelope).await;
 
-        // Update mailbox depth gauge
+        // Update mailbox depth gauge with actor type
         if result.is_ok() {
-            MessageMetrics::mailbox_depth(self.len());
+            MessageMetrics::mailbox_depth_typed(&self.actor_type, self.len(), self.capacity);
         }
 
         result
@@ -82,8 +94,12 @@ impl MailboxSender {
         let result = self.tx.try_send(envelope);
 
         match &result {
-            Ok(_) => MessageMetrics::mailbox_depth(self.len()),
-            Err(mpsc::error::TrySendError::Full(_)) => MessageMetrics::mailbox_full(),
+            Ok(_) => {
+                MessageMetrics::mailbox_depth_typed(&self.actor_type, self.len(), self.capacity)
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                MessageMetrics::mailbox_full_typed(&self.actor_type)
+            }
             _ => {}
         }
 
@@ -118,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mailbox_send_recv() {
-        let (mut mailbox, sender) = Mailbox::new(10);
+        let (mut mailbox, sender) = Mailbox::new_with_type(10, "test".to_string());
 
         sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
 
@@ -128,7 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mailbox_try_recv() {
-        let (mut mailbox, sender) = Mailbox::new(10);
+        let (mut mailbox, sender) = Mailbox::new_with_type(10, "test".to_string());
 
         // Should be empty initially
         assert!(mailbox.try_recv().is_err());
@@ -142,7 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mailbox_bounded() {
-        let (mut mailbox, sender) = Mailbox::new(2);
+        let (mut mailbox, sender) = Mailbox::new_with_type(2, "test".to_string());
 
         // Fill the mailbox
         sender.send(Envelope::signal(Signal::Stop)).await.unwrap();
@@ -162,7 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mailbox_close() {
-        let (mut mailbox, sender) = Mailbox::new(10);
+        let (mut mailbox, sender) = Mailbox::new_with_type(10, "test".to_string());
 
         mailbox.close();
 
@@ -173,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mailbox_sender_drop() {
-        let (mut mailbox, sender) = Mailbox::new(10);
+        let (mut mailbox, sender) = Mailbox::new_with_type(10, "test".to_string());
 
         drop(sender);
 
@@ -184,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_mailbox_sender_status() {
-        let (_mailbox, sender) = Mailbox::new(10);
+        let (_mailbox, sender) = Mailbox::new_with_type(10, "test".to_string());
 
         assert!(!sender.is_closed());
         assert_eq!(sender.capacity(), 10);
@@ -193,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mailbox_sender_clone() {
-        let (mut mailbox, sender) = Mailbox::new(10);
+        let (mut mailbox, sender) = Mailbox::new_with_type(10, "test".to_string());
         let sender2 = sender.clone();
 
         sender.send(Envelope::signal(Signal::Stop)).await.unwrap();

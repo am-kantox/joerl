@@ -76,16 +76,22 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## 🟡 Important Enhancements
 
-### 4. Per-Actor Mailbox Tracking
-**Status**: Not started  
+### 4. Per-Actor Mailbox Tracking ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Immediate  
 **Value**: Identify backpressure hotspots, find slow consumers
 
 **Implementation**:
-- [ ] Change `mailbox_depth` gauge to include `actor_type` label
-- [ ] Track max mailbox depth per actor type
-- [ ] Add `joerl_mailbox_depth_max{actor_type}` gauge
-- [ ] Add `joerl_mailbox_utilization{actor_type}` gauge (depth/capacity)
+- [x] Add `actor_type` and `capacity` fields to `MailboxSender`
+- [x] Create `new_with_type()` method for mailbox creation with type
+- [x] Change `mailbox_depth` gauge to include `actor_type` label
+- [x] Add `joerl_mailbox_utilization_percent{actor_type}` gauge (depth/capacity * 100)
+- [x] Add `actor_type` label to `mailbox_full_total` counter
+- [x] Update ActorSystem to pass actor type to mailbox
+- [x] Keep backward-compatible non-typed variants
+- [x] Update documentation with new metrics and queries
+
+**Result**: All mailbox metrics now track per-actor-type data, enabling identification of specific actors with backpressure issues.
 
 ---
 
@@ -197,18 +203,18 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## Progress Summary
 
-- **Completed**: 1/12 (8.3%)
+- **Completed**: 2/12 (16.7%)
 - **In Progress**: 0/12
-- **Not Started**: 11/12
+- **Not Started**: 10/12
 
 ---
 
 ## Priority Order for Implementation
 
 ### Phase 1: Core Observability (Immediate)
-1. ✅ **Actor-Level Labels/Metadata** (#1) - IN PROGRESS
-2. **Per-Actor Mailbox Tracking** (#4)
-3. **GenServer/GenStatem Metrics** (#3)
+1. ✅ **Actor-Level Labels/Metadata** (#1) - COMPLETED
+2. ✅ **Per-Actor Mailbox Tracking** (#4) - COMPLETED
+3. **GenServer/GenStatem Metrics** (#3) - Next up!
 
 ### Phase 2: Production Readiness (Short-term)
 4. **Distributed System Metrics** (#2)

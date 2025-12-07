@@ -390,9 +390,9 @@ impl ActorSystem {
         actor_type: &str,
     ) -> ActorRef {
         let pid = Pid::new();
-        let (mailbox, sender) = Mailbox::new(capacity);
-        let mut ctx = ActorContext::new(pid, mailbox);
         let actor_type_owned = actor_type.to_string();
+        let (mailbox, sender) = Mailbox::new_with_type(capacity, actor_type_owned.clone());
+        let mut ctx = ActorContext::new(pid, mailbox);
 
         // Register actor
         let entry = ActorEntry {

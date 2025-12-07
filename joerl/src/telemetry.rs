@@ -198,14 +198,38 @@ impl MessageMetrics {
         TelemetrySpan::new("joerl_message_processing_duration_seconds")
     }
 
-    /// Updates mailbox depth gauge.
+    /// Updates mailbox depth gauge with actor type.
+    #[inline]
+    pub fn mailbox_depth_typed(actor_type: &str, _depth: usize, _capacity: usize) {
+        #[cfg(feature = "telemetry")]
+        {
+            gauge!("joerl_mailbox_depth", "type" => actor_type.to_string()).set(_depth as f64);
+            // Also track utilization percentage
+            let utilization = if _capacity > 0 {
+                (_depth as f64 / _capacity as f64) * 100.0
+            } else {
+                0.0
+            };
+            gauge!("joerl_mailbox_utilization_percent", "type" => actor_type.to_string())
+                .set(utilization);
+        }
+    }
+
+    /// Updates mailbox depth gauge (backward compatible, no type label).
     #[inline]
     pub fn mailbox_depth(_depth: usize) {
         #[cfg(feature = "telemetry")]
         gauge!("joerl_mailbox_depth").set(_depth as f64);
     }
 
-    /// Records mailbox full event.
+    /// Records mailbox full event with actor type.
+    #[inline]
+    pub fn mailbox_full_typed(actor_type: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_mailbox_full_total", "type" => actor_type.to_string()).increment(1);
+    }
+
+    /// Records mailbox full event (backward compatible, no type label).
     #[inline]
     pub fn mailbox_full() {
         #[cfg(feature = "telemetry")]
