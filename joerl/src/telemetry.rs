@@ -59,6 +59,15 @@
 //! - `joerl_signals_ignored_total`: Signals ignored (trapped exits)
 //! - `joerl_exit_signals_by_reason_total`: Exit signals by reason
 //!
+//! ### Distributed System
+//! - `joerl_remote_messages_sent_total`: Remote messages sent (by target node)
+//! - `joerl_remote_messages_failed_total`: Remote message send failures (by node and reason)
+//! - `joerl_node_connections_active`: Active node connections
+//! - `joerl_node_connection_established_total`: Node connections established
+//! - `joerl_node_connection_lost_total`: Node connections lost
+//! - `joerl_network_latency_seconds`: Network operation latency histogram
+//! - `joerl_serialization_errors_total`: Message serialization errors
+//!
 //! ## Example
 //!
 //! ```rust,no_run
@@ -1071,6 +1080,97 @@ impl MemoryMetrics {
     }
 }
 
+/// Distributed system metrics.
+///
+/// Tracks node connections, remote messaging, and network operations.
+/// Essential for monitoring distributed actor systems.
+pub struct DistributedMetrics;
+
+impl DistributedMetrics {
+    /// Records a remote message send.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_node` - The name of the target node
+    #[inline]
+    pub fn remote_message_sent(target_node: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_remote_messages_sent_total", "target_node" => target_node.to_string())
+            .increment(1);
+    }
+
+    /// Records a failed remote message send.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_node` - The name of the target node
+    /// * `reason` - The failure reason (e.g., "connection_failed", "serialization_error")
+    #[inline]
+    pub fn remote_message_failed(target_node: &str, reason: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!(
+            "joerl_remote_messages_failed_total",
+            "target_node" => target_node.to_string(),
+            "reason" => reason.to_string()
+        )
+        .increment(1);
+    }
+
+    /// Updates the gauge of active node connections.
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - The current number of active connections
+    #[inline]
+    pub fn active_connections(count: usize) {
+        #[cfg(feature = "telemetry")]
+        gauge!("joerl_node_connections_active").set(count as f64);
+    }
+
+    /// Records a successful node connection establishment.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_name` - The name of the connected node
+    #[inline]
+    pub fn connection_established(node_name: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_node_connection_established_total", "node" => node_name.to_string())
+            .increment(1);
+    }
+
+    /// Records a node connection loss.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_name` - The name of the disconnected node
+    #[inline]
+    pub fn connection_lost(node_name: &str) {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_node_connection_lost_total", "node" => node_name.to_string()).increment(1);
+    }
+
+    /// Records a message serialization error.
+    #[inline]
+    pub fn serialization_error() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_serialization_errors_total").increment(1);
+    }
+
+    /// Records network latency for a remote operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_name` - The name of the remote node
+    /// * `duration_secs` - The operation duration in seconds
+    #[inline]
+    pub fn network_latency(node_name: &str, duration_secs: f64) {
+        #[cfg(feature = "telemetry")]
+        histogram!("joerl_network_latency_seconds", "node" => node_name.to_string())
+            .record(duration_secs);
+    }
+}
+
 /// Initializes telemetry subsystem.
 ///
 /// This is a no-op when the `telemetry` feature is disabled.
@@ -1181,5 +1281,16 @@ mod tests {
     #[test]
     fn test_init() {
         init();
+    }
+
+    #[test]
+    fn test_distributed_metrics_no_panic() {
+        DistributedMetrics::remote_message_sent("node_a");
+        DistributedMetrics::remote_message_failed("node_b", "connection_failed");
+        DistributedMetrics::active_connections(5);
+        DistributedMetrics::connection_established("node_c");
+        DistributedMetrics::connection_lost("node_d");
+        DistributedMetrics::serialization_error();
+        DistributedMetrics::network_latency("node_e", 0.05);
     }
 }

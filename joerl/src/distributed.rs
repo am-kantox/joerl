@@ -47,6 +47,7 @@
 
 use crate::epmd::{EpmdClient, NodeInfo};
 use crate::serialization::{SerializableEnvelope, SerializableMessage, get_global_registry};
+use crate::telemetry::DistributedMetrics;
 use crate::{ActorSystem, Message, Pid};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -183,6 +184,9 @@ impl NodeConnection {
     /// Sends a message to the remote node
     #[allow(dead_code)] // Used in future remote messaging implementation
     async fn send_message(&self, msg: &NetworkMessage) -> Result<()> {
+        #[cfg(feature = "telemetry")]
+        let start = std::time::Instant::now();
+
         let mut stream_guard = self.stream.write().await;
 
         // Reconnect if needed
@@ -194,6 +198,10 @@ impl NodeConnection {
                     *stream_guard = Some(stream);
                 }
                 Err(e) => {
+                    DistributedMetrics::remote_message_failed(
+                        &self.node_info.name,
+                        "reconnect_failed",
+                    );
                     return Err(DistributedError::ConnectionFailed(format!(
                         "Failed to reconnect to {}: {}",
                         addr, e
@@ -213,17 +221,28 @@ impl NodeConnection {
 
         if let Err(e) = stream.write_all(&len).await {
             *stream_guard = None;
+            DistributedMetrics::remote_message_failed(&self.node_info.name, "write_failed");
             return Err(e.into());
         }
 
         if let Err(e) = stream.write_all(&msg_bytes).await {
             *stream_guard = None;
+            DistributedMetrics::remote_message_failed(&self.node_info.name, "write_failed");
             return Err(e.into());
         }
 
         if let Err(e) = stream.flush().await {
             *stream_guard = None;
+            DistributedMetrics::remote_message_failed(&self.node_info.name, "flush_failed");
             return Err(e.into());
+        }
+
+        // Record successful send and latency
+        DistributedMetrics::remote_message_sent(&self.node_info.name);
+        #[cfg(feature = "telemetry")]
+        {
+            let duration = start.elapsed().as_secs_f64();
+            DistributedMetrics::network_latency(&self.node_info.name, duration);
         }
 
         match msg {
@@ -333,6 +352,10 @@ impl NodeRegistry {
         self.connections_by_id.insert(node_id, Arc::clone(&conn));
         self.node_id_to_name.insert(node_id, node_name.clone());
 
+        // Record connection establishment and update active connections gauge
+        DistributedMetrics::connection_established(&node_name);
+        DistributedMetrics::active_connections(self.connections_by_name.len());
+
         info!(
             "Established connection to node {} (id: {})",
             node_name, node_id
@@ -367,6 +390,10 @@ impl NodeRegistry {
         self.connections_by_id.remove(&node_id);
         self.node_id_to_name.remove(&node_id);
         self.connection_locks.remove(node_name);
+
+        // Record connection loss and update active connections gauge
+        DistributedMetrics::connection_lost(node_name);
+        DistributedMetrics::active_connections(self.connections_by_name.len());
 
         debug!("Removed connection to node {} (id: {})", node_name, node_id);
     }
@@ -443,10 +470,7 @@ impl DistributedSystem {
     /// * `node_name` - Unique name for this node
     /// * `listen_address` - Address to listen for incoming connections (e.g., "127.0.0.1:5000")
     /// * `epmd_address` - Address of EPMD server (e.g., "127.0.0.1:4369")
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use ActorSystem::new_distributed() instead"
-    )]
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub async fn new(
         node_name: impl Into<String>,
         listen_address: impl Into<String>,
@@ -694,14 +718,17 @@ fn serialize_message(msg: &Message) -> Result<Vec<u8>> {
     let serializable = msg
         .downcast_ref::<Box<dyn SerializableMessage>>()
         .ok_or_else(|| {
+            DistributedMetrics::serialization_error();
             DistributedError::SerializationError(
                 "Message does not implement SerializableMessage".to_string(),
             )
         })?;
 
     // Wrap in envelope and serialize
-    let envelope = SerializableEnvelope::wrap(serializable.as_ref())
-        .map_err(|e| DistributedError::SerializationError(e.to_string()))?;
+    let envelope = SerializableEnvelope::wrap(serializable.as_ref()).map_err(|e| {
+        DistributedMetrics::serialization_error();
+        DistributedError::SerializationError(e.to_string())
+    })?;
 
     Ok(envelope.to_bytes())
 }
@@ -709,17 +736,20 @@ fn serialize_message(msg: &Message) -> Result<Vec<u8>> {
 /// Deserializes bytes into a Message using the global registry.
 fn deserialize_message(data: &[u8]) -> Result<Message> {
     // Reconstruct envelope from bytes
-    let envelope = SerializableEnvelope::from_bytes(data)
-        .map_err(|e| DistributedError::SerializationError(e.to_string()))?;
+    let envelope = SerializableEnvelope::from_bytes(data).map_err(|e| {
+        DistributedMetrics::serialization_error();
+        DistributedError::SerializationError(e.to_string())
+    })?;
 
     // Get global registry
     let registry = get_global_registry();
     let registry_guard = registry.read().unwrap();
 
     // Unwrap envelope using registry
-    let serializable = envelope
-        .unwrap(&registry_guard)
-        .map_err(|e| DistributedError::SerializationError(e.to_string()))?;
+    let serializable = envelope.unwrap(&registry_guard).map_err(|e| {
+        DistributedMetrics::serialization_error();
+        DistributedError::SerializationError(e.to_string())
+    })?;
 
     // Convert to Message
     Ok(Box::new(serializable))

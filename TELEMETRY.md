@@ -175,6 +175,22 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 
 **Reason labels**: `normal`, `shutdown`, `killed`, `panic`, `custom`
 
+### Distributed System Operations
+
+| Metric | Type | Description | Labels |
+|--------|------|-------------|--------|
+| `joerl_remote_messages_sent_total` | Counter | Remote messages sent successfully | `target_node` |
+| `joerl_remote_messages_failed_total` | Counter | Failed remote message sends | `target_node`, `reason` |
+| `joerl_node_connections_active` | Gauge | Current active node connections | - |
+| `joerl_node_connection_established_total` | Counter | Node connections established | `node` |
+| `joerl_node_connection_lost_total` | Counter | Node connections lost | `node` |
+| `joerl_network_latency_seconds` | Histogram | Network operation latency | `node` |
+| `joerl_serialization_errors_total` | Counter | Message serialization errors | - |
+
+**Node labels**: Remote node names (e.g., `"worker1"`, `"node_b"`)
+
+**Failure reason labels**: `reconnect_failed`, `write_failed`, `flush_failed`, `connection_failed`, `serialization_error`
+
 ## Integration Examples
 
 ### Prometheus
@@ -354,6 +370,39 @@ topk(5, rate(joerl_exit_signals_by_reason_total[5m]) by (reason))
 rate(joerl_signals_ignored_total[5m]) /
 (rate(joerl_signals_received_total[5m]) + 0.001)
 
+# Remote message throughput by node
+rate(joerl_remote_messages_sent_total[1m]) by (target_node)
+
+# Remote message failure rate by node and reason
+rate(joerl_remote_messages_failed_total[1m]) by (target_node, reason)
+
+# Network latency percentiles by node
+histogram_quantile(0.50, rate(joerl_network_latency_seconds_bucket[5m])) by (node)
+histogram_quantile(0.95, rate(joerl_network_latency_seconds_bucket[5m])) by (node)
+histogram_quantile(0.99, rate(joerl_network_latency_seconds_bucket[5m])) by (node)
+
+# Current active node connections
+joerl_node_connections_active
+
+# Node connection churn (establishes + losses)
+rate(joerl_node_connection_established_total[5m]) + 
+rate(joerl_node_connection_lost_total[5m])
+
+# Nodes with most connection issues
+topk(5, rate(joerl_node_connection_lost_total[5m]) by (node))
+
+# Message serialization error rate
+rate(joerl_serialization_errors_total[1m])
+
+# Remote message success rate
+(rate(joerl_remote_messages_sent_total[1m]) / 
+ (rate(joerl_remote_messages_sent_total[1m]) + 
+  rate(joerl_remote_messages_failed_total[1m]) + 0.001)) * 100
+
+# Average network latency across all nodes
+avg(rate(joerl_network_latency_seconds_sum[1m]) / 
+    rate(joerl_network_latency_seconds_count[1m]))
+
 # Message queue wait time (backlog)
 rate(joerl_message_queue_wait_seconds_sum[1m]) /
 rate(joerl_message_queue_wait_seconds_count[1m])
@@ -411,6 +460,11 @@ Monitor critical metrics:
 - **Message send failures**: `rate(joerl_messages_sent_failed_total[1m]) > 100`
 - **Restart loops**: `rate(joerl_short_lived_actors_total[5m]) > 5`
 - **Abnormal exit signals**: `rate(joerl_exit_signals_by_reason_total{reason!="normal"}[5m]) > 10`
+- **Remote message failures**: `rate(joerl_remote_messages_failed_total[1m]) > 50`
+- **Node connection losses**: `rate(joerl_node_connection_lost_total[5m]) > 1`
+- **High network latency**: `histogram_quantile(0.95, rate(joerl_network_latency_seconds_bucket[5m])) > 0.5`
+- **Serialization errors**: `rate(joerl_serialization_errors_total[1m]) > 0`
+- **Node disconnected**: `joerl_node_connections_active < expected_count`
 
 ### 3. Use Dashboards
 
