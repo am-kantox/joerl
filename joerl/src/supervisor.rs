@@ -628,7 +628,7 @@ impl Actor for Supervisor {
 /// let supervisor = spawn_supervisor(&system, spec);
 ///
 /// // Supervisor is now running and monitoring its children
-/// assert!(system.is_alive(supervisor.pid()));
+///     assert!(system.is_actor_alive(supervisor.pid()));
 /// # });
 /// ```
 pub fn spawn_supervisor(system: &Arc<ActorSystem>, spec: SupervisorSpec) -> ActorRef {

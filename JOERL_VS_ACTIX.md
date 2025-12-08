@@ -2,7 +2,7 @@
 
 ## Quick Reference
 
-| Aspect | joerl 0.3.0 | actix 0.13.5 |
+| Aspect | joerl 0.4.0 | actix 0.13.5 |
 |--------|-------------|--------------|
 | **Philosophy** | Erlang/OTP fidelity | Rust-native pragmatism |
 | **Message Types** | Dynamic (`Box<dyn Any>`) | Static (typed traits) |
@@ -99,7 +99,7 @@ impl Handler<Increment> for Counter {
 
 ### Fault Tolerance & Panic Handling
 
-| Feature | joerl 0.3.0 | actix 0.13.5 | Winner |
+| Feature | joerl 0.4.0 | actix 0.13.5 | Winner |
 |---------|-------------|--------------|--------|
 | **Panic catching** | ✅ Automatic | ❌ Manual | 🏆 **joerl** |
 | **Panic to signal** | ✅ `ExitReason::Panic` | ❌ | 🏆 **joerl** |
@@ -111,11 +111,11 @@ impl Handler<Increment> for Counter {
 
 ---
 
-## NEW in joerl 0.3.0: Full Erlang/OTP Panic Handling
+## Full Erlang/OTP Panic Handling (since 0.3.0)
 
 ### What Happens When an Actor Panics?
 
-#### joerl 0.3.0 Behavior (Erlang/OTP-style)
+#### joerl Behavior (Erlang/OTP-style)
 
 ```rust
 use joerl::{Actor, ActorContext, ActorSystem, ExitReason, Signal};
@@ -480,7 +480,7 @@ Requires refactoring:
 
 ## Conclusion
 
-### joerl 0.3.0 Strengths
+### joerl 0.4.0 Strengths
 
 1. ✅ **Full Erlang/OTP panic handling** - unique to joerl
 2. ✅ **Faster in most benchmarks** - simpler architecture wins
@@ -521,6 +521,6 @@ Requires refactoring:
 - **Erlang/OTP**: https://www.erlang.org/doc/
 
 **Version Info:**
-- joerl: 0.3.0 (2025-12-07)
+- joerl: 0.4.0 (2024-12-08)
 - actix: 0.13.5
-- Comparison last updated: 2025-12-07
+- Comparison last updated: 2024-12-08

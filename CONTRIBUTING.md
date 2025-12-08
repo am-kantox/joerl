@@ -19,7 +19,7 @@ Thank you for your interest in contributing to joerl! This document provides gui
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.85 or later (for edition 2024 support)
 - Cargo
 
 ### Building

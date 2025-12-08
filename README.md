@@ -25,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-joerl = "0.1"
+joerl = "0.4"
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 ```
@@ -320,14 +320,20 @@ See the [`examples/`](examples/) directory for more examples:
 - `counter.rs` - Simple counter actor
 - `gen_server_counter.rs` - GenServer (gen_server behavior) example
 - `turnstile.rs` - GenStatem DSL with Mermaid state diagram
+- `gen_statem_turnstile.rs` - Alternative GenStatem example
 - `document_workflow.rs` - Complex FSM with approval workflow and revision cycle
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
 - **`panic_handling.rs` - Comprehensive panic handling demonstration (Erlang/OTP-style)**
 - **`telemetry_demo.rs` - Telemetry and metrics with Prometheus export**
+- `serialization_example.rs` - Trait-based message serialization
 - `remote_actors.rs` - Distributed actors conceptual foundation
+- `remote_ping_pong.rs` - Remote messaging between nodes
 - `distributed_chat.rs` - Multi-node chat system over TCP
+- `distributed_cluster.rs` - Multi-node cluster with EPMD discovery
+- `distributed_system_example.rs` - DistributedSystem API demo
+- `epmd_server.rs` - Standalone EPMD server
 
 Run examples with:
 

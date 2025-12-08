@@ -483,31 +483,30 @@ if stream_guard.is_none() {
 
 ## Building on the Foundation
 
-The EPMD implementation provides the infrastructure. To build a complete distributed system, you can extend with:
+The distributed system provides a complete solution for remote messaging using the `SerializableMessage` trait (see examples above). You can extend it further with:
 
-### 1. Message Serialization Strategy ⚠️ User Choice
+### 1. Message Serialization
 
-The current implementation provides transport but leaves message serialization to users:
+joerl provides a trait-based serialization system (see `serialization` module and `remote_ping_pong.rs` example):
 
-**Option 1: User-level serialization**
+**Built-in approach (recommended)**
 ```rust
-let data = serde_json::to_vec(&my_message)?;
-remote_actor.send(Box::new(data)).await?;
-```
+use joerl::serialization::{SerializableMessage, register_message_type};
 
-**Option 2: Trait-based approach**
-```rust
-pub trait RemoteMessage: Any + Send + Serialize + Deserialize {}
-```
-
-**Option 3: Message envelope**
-```rust
-#[derive(Serialize, Deserialize)]
-enum RemoteCommand {
-    Echo(String),
-    Compute(i32, i32),
+impl SerializableMessage for MyMessage {
+    fn message_type_id(&self) -> &'static str { "app::MyMessage" }
+    fn serialize(&self) -> Result<Vec<u8>, SerializationError> { /* ... */ }
+    fn as_any(&self) -> &dyn Any { self }
 }
+
+// Register deserializer
+register_message_type("app::MyMessage", Box::new(deserialize_my_message));
 ```
+
+**Alternative approaches:**
+- Use the provided `impl_serializable!` macro for simple cases
+- Implement custom serialization formats per message type
+- See [SERIALIZATION.md](./SERIALIZATION.md) for detailed documentation
 
 ### 2. Additional Features You Can Add
 
@@ -535,13 +534,9 @@ enum RemoteCommand {
 - **Connection Management**: TCP transport with auto-reconnect
 - **Pid Serialization**: Pids with node support
 - **Keep-Alive Protocol**: Automatic dead node removal
-- **Production Examples**: Working multi-node demonstrations
-
-### 🚧 Infrastructure Ready (User Implementation)
-
-- **Remote Messaging**: Transport ready, serialization strategy is user choice
-- **Message Routing**: Can be built on NetworkMessage infrastructure
-- **Remote Spawn**: Foundation in place
+- **Remote Messaging**: Full trait-based serialization with global registry
+- **Message Routing**: Location-transparent message passing
+- **Production Examples**: Working multi-node demonstrations with remote messaging
 
 ### 🔮 Future Enhancements
 

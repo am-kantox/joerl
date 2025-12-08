@@ -6,6 +6,37 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 **joerl** is an Erlang-inspired actor model library for Rust, named in tribute to Joe Armstrong, the creator of Erlang. It implements the actor model with supervision trees, links, monitors, and bounded mailboxes using Rust's async/await built on tokio.
 
+## Key Features
+
+### GenServer
+Erlang-style generic server with call (synchronous) and cast (asynchronous) operations.
+
+### GenStatem
+Finite state machines defined with Mermaid diagrams, compiled to Rust code with validation.
+
+### Distributed Clustering
+- EPMD server and client for node discovery
+- Location-transparent messaging between nodes
+- Unified ActorSystem API (same for local and distributed)
+- TCP transport with automatic reconnection
+- Message serialization with global registry
+
+### Panic Handling
+Full Erlang/OTP-style panic recovery:
+- Panics caught automatically
+- Links and monitors notified
+- Supervisors restart panicked actors
+- Guaranteed cleanup (no leaks)
+
+### Health Monitoring
+System health checks with configurable thresholds for:
+- Active actor count
+- Message processing rates
+- Supervisor restart rates
+
+### Telemetry (Optional)
+Metrics and observability with Prometheus/OpenTelemetry support.
+
 ## Common Commands
 
 ### Building
@@ -57,13 +88,27 @@ The library follows a modular design organized around core actor system concepts
 
 - **`system`**: The `ActorSystem` is the runtime that manages all actors. It maintains a `DashMap` registry mapping `Pid` to `ActorEntry` (containing mailbox sender, links, monitors). Spawning returns an `ActorRef` which is used to send messages and interact with actors.
 
-- **`pid`**: Process identifiers using UUID v7 for unique, time-ordered actor IDs.
+- **`pid`**: Process identifiers using UUID v7 for unique, time-ordered actor IDs. Now includes node support for distributed systems.
 
 - **`mailbox`**: Bounded MPSC channels (using tokio) that provide backpressure. Messages are wrapped in `Envelope` which can contain either user messages or system signals.
 
 - **`message`**: Defines `Message` (type-erased `Box<dyn Any>`), `Signal` enum (Exit, Down, Stop, Kill), and `ExitReason` for actor termination.
 
+- **`gen_server`**: Implements Erlang's gen_server behavior with call/cast semantics for structured request-reply patterns.
+
+- **`gen_statem`**: Implements Erlang's gen_statem with Mermaid DSL for defining finite state machines with compile-time validation.
+
 - **`supervisor`**: Implements Erlang/OTP supervision trees. Supervisors monitor children and restart them according to strategies (`OneForOne`, `OneForAll`, `RestForOne`). Includes restart intensity limits to prevent infinite loops.
+
+- **`distributed`**: Distributed actor system with location transparency. Wraps ActorSystem with EPMD integration, node discovery, and TCP transport.
+
+- **`epmd`**: Erlang Port Mapper Daemon implementation for node discovery and registration (client and server).
+
+- **`serialization`**: Trait-based message serialization system with global registry for remote messaging.
+
+- **`health`**: System health monitoring with configurable checks for actor counts, message rates, and resource usage.
+
+- **`telemetry`**: Optional metrics and observability support (requires "telemetry" feature).
 
 - **`error`**: Error types and Result alias using `thiserror`.
 

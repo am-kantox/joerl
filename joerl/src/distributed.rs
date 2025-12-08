@@ -580,7 +580,10 @@ impl DistributedSystem {
     }
 
     /// Handles messages from a connected node
-    async fn handle_node_connection(mut stream: TcpStream, system: Arc<ActorSystem>) -> Result<()> {
+    async fn handle_node_connection(
+        mut stream: TcpStream,
+        _system: Arc<ActorSystem>,
+    ) -> Result<()> {
         loop {
             // Read message length
             let mut len_buf = [0u8; 4];
@@ -943,12 +946,11 @@ async fn handle_system_rpc(rpc: SystemRpc, system: &Arc<ActorSystem>) {
             let net_msg = NetworkMessage::SystemRpc(response);
 
             // Send response to the reply_to node
-            if let Some(registry) = system.node_registry() {
-                if let Ok(conn) = registry.get_by_node_id(reply_to.node()).await {
-                    if let Err(e) = conn.send_message(&net_msg).await {
-                        warn!("Failed to send pong response: {}", e);
-                    }
-                }
+            if let Some(registry) = system.node_registry()
+                && let Ok(conn) = registry.get_by_node_id(reply_to.node()).await
+                && let Err(e) = conn.send_message(&net_msg).await
+            {
+                warn!("Failed to send pong response: {}", e);
             }
         }
         SystemRpc::PongResponse { target, is_alive } => {
