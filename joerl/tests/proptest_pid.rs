@@ -148,7 +148,7 @@ fn prop_pid_inequality_different_ids(node: u32, id1: u64, id2: u64) -> bool {
 #[quickcheck]
 fn prop_pid_clone_equality(arb: ArbitraryPid) -> bool {
     let pid: Pid = arb.into();
-    let cloned = pid.clone();
+    let cloned = pid;
 
     pid.node() == cloned.node() && pid.id() == cloned.id()
 }

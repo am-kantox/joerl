@@ -68,10 +68,7 @@ impl Arbitrary for TestMessage {
         // Generate valid UTF-8 string
         let text_len = u8::arbitrary(g) as usize % 100;
         let text: String = (0..text_len)
-            .map(|_| {
-                let c = char::from_u32(u32::arbitrary(g) % 0x80).unwrap_or('a');
-                c
-            })
+            .map(|_| char::from_u32(u32::arbitrary(g) % 0x80).unwrap_or('a'))
             .collect();
 
         TestMessage { value, text }
