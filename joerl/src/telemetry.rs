@@ -91,6 +91,71 @@ use std::sync::OnceLock;
 #[cfg(feature = "telemetry")]
 use tracing::{debug_span, info_span};
 
+/// Trait for custom telemetry providers.
+///
+/// Implement this trait to integrate joerl with custom telemetry backends
+/// or add application-specific telemetry logic.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use joerl::telemetry::TelemetryProvider;
+///
+/// struct MyTelemetryProvider;
+///
+/// impl TelemetryProvider for MyTelemetryProvider {
+///     fn on_actor_spawned(&self, actor_type: &str, pid: &str) {
+///         println!("Actor {} spawned with pid {}", actor_type, pid);
+///     }
+///     
+///     fn on_actor_stopped(&self, actor_type: &str, pid: &str, reason: &str) {
+///         println!("Actor {} stopped: {}", actor_type, reason);
+///     }
+///     
+///     fn on_message_sent(&self, from_pid: &str, to_pid: &str) {
+///         // Custom logic
+///     }
+///     
+///     fn on_message_received(&self, pid: &str) {
+///         // Custom logic
+///     }
+/// }
+///
+/// // Register the provider
+/// joerl::telemetry::set_telemetry_provider(Box::new(MyTelemetryProvider));
+/// ```
+pub trait TelemetryProvider: Send + Sync {
+    /// Called when an actor is spawned.
+    fn on_actor_spawned(&self, actor_type: &str, pid: &str) {
+        let _ = (actor_type, pid);
+    }
+
+    /// Called when an actor stops.
+    fn on_actor_stopped(&self, actor_type: &str, pid: &str, reason: &str) {
+        let _ = (actor_type, pid, reason);
+    }
+
+    /// Called when an actor panics.
+    fn on_actor_panicked(&self, actor_type: &str, pid: &str, error: &str) {
+        let _ = (actor_type, pid, error);
+    }
+
+    /// Called when a message is sent.
+    fn on_message_sent(&self, from_pid: &str, to_pid: &str) {
+        let _ = (from_pid, to_pid);
+    }
+
+    /// Called when a message is received.
+    fn on_message_received(&self, pid: &str) {
+        let _ = pid;
+    }
+
+    /// Called when a supervisor restarts a child.
+    fn on_supervisor_restart(&self, child_type: &str, strategy: &str) {
+        let _ = (child_type, strategy);
+    }
+}
+
 /// Configuration for telemetry sampling.
 ///
 /// Sampling reduces overhead in high-throughput systems by only recording
@@ -142,6 +207,9 @@ static TELEMETRY_CONFIG: OnceLock<TelemetryConfig> = OnceLock::new();
 
 #[cfg(feature = "telemetry")]
 static SAMPLE_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "telemetry")]
+static CUSTOM_PROVIDER: OnceLock<Box<dyn TelemetryProvider>> = OnceLock::new();
 
 /// Telemetry context for tracking operation duration.
 ///
@@ -803,6 +871,204 @@ fn should_sample(rate: u32) -> bool {
     // Use counter modulo 100 for deterministic sampling
     let counter = SAMPLE_COUNTER.fetch_add(1, Ordering::Relaxed);
     (counter % 100) < rate
+}
+
+/// Sets a custom telemetry provider.
+///
+/// This allows you to integrate joerl with custom telemetry backends or
+/// add application-specific telemetry logic. Can only be called once.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use joerl::telemetry::{TelemetryProvider, set_telemetry_provider};
+///
+/// struct MyProvider;
+///
+/// impl TelemetryProvider for MyProvider {
+///     fn on_actor_spawned(&self, actor_type: &str, pid: &str) {
+///         // Custom logging or metrics
+///         println!("Spawned: {} ({})", actor_type, pid);
+///     }
+/// }
+///
+/// set_telemetry_provider(Box::new(MyProvider));
+/// ```
+pub fn set_telemetry_provider(_provider: Box<dyn TelemetryProvider>) {
+    #[cfg(feature = "telemetry")]
+    {
+        if CUSTOM_PROVIDER.set(_provider).is_err() {
+            tracing::warn!("Telemetry provider already set, ignoring new provider");
+        } else {
+            tracing::info!("Custom telemetry provider registered");
+        }
+    }
+}
+
+/// Invokes the custom provider hook for actor spawned.
+#[cfg(feature = "telemetry")]
+#[inline]
+#[allow(dead_code)] // TODO: Integrate provider hooks in actor system
+pub(crate) fn invoke_provider_actor_spawned(actor_type: &str, pid: &str) {
+    if let Some(provider) = CUSTOM_PROVIDER.get() {
+        provider.on_actor_spawned(actor_type, pid);
+    }
+}
+
+/// Invokes the custom provider hook for actor stopped.
+#[cfg(feature = "telemetry")]
+#[inline]
+#[allow(dead_code)] // TODO: Integrate provider hooks in actor system
+pub(crate) fn invoke_provider_actor_stopped(actor_type: &str, pid: &str, reason: &str) {
+    if let Some(provider) = CUSTOM_PROVIDER.get() {
+        provider.on_actor_stopped(actor_type, pid, reason);
+    }
+}
+
+/// Invokes the custom provider hook for actor panicked.
+#[cfg(feature = "telemetry")]
+#[inline]
+#[allow(dead_code)] // TODO: Integrate provider hooks in actor system
+pub(crate) fn invoke_provider_actor_panicked(actor_type: &str, pid: &str, error: &str) {
+    if let Some(provider) = CUSTOM_PROVIDER.get() {
+        provider.on_actor_panicked(actor_type, pid, error);
+    }
+}
+
+/// Invokes the custom provider hook for message sent.
+#[cfg(feature = "telemetry")]
+#[inline]
+#[allow(dead_code)] // TODO: Integrate provider hooks in actor system
+pub(crate) fn invoke_provider_message_sent(from_pid: &str, to_pid: &str) {
+    if let Some(provider) = CUSTOM_PROVIDER.get() {
+        provider.on_message_sent(from_pid, to_pid);
+    }
+}
+
+/// Invokes the custom provider hook for message received.
+#[cfg(feature = "telemetry")]
+#[inline]
+#[allow(dead_code)] // TODO: Integrate provider hooks in actor system
+pub(crate) fn invoke_provider_message_received(pid: &str) {
+    if let Some(provider) = CUSTOM_PROVIDER.get() {
+        provider.on_message_received(pid);
+    }
+}
+
+/// Invokes the custom provider hook for supervisor restart.
+#[cfg(feature = "telemetry")]
+#[inline]
+#[allow(dead_code)] // TODO: Integrate provider hooks in actor system
+pub(crate) fn invoke_provider_supervisor_restart(child_type: &str, strategy: &str) {
+    if let Some(provider) = CUSTOM_PROVIDER.get() {
+        provider.on_supervisor_restart(child_type, strategy);
+    }
+}
+
+/// No-op provider invocations when telemetry is disabled.
+#[cfg(not(feature = "telemetry"))]
+#[inline]
+pub(crate) fn invoke_provider_actor_spawned(_actor_type: &str, _pid: &str) {}
+
+#[cfg(not(feature = "telemetry"))]
+#[inline]
+pub(crate) fn invoke_provider_actor_stopped(_actor_type: &str, _pid: &str, _reason: &str) {}
+
+#[cfg(not(feature = "telemetry"))]
+#[inline]
+pub(crate) fn invoke_provider_actor_panicked(_actor_type: &str, _pid: &str, _error: &str) {}
+
+#[cfg(not(feature = "telemetry"))]
+#[inline]
+pub(crate) fn invoke_provider_message_sent(_from_pid: &str, _to_pid: &str) {}
+
+#[cfg(not(feature = "telemetry"))]
+#[inline]
+pub(crate) fn invoke_provider_message_received(_pid: &str) {}
+
+#[cfg(not(feature = "telemetry"))]
+#[inline]
+pub(crate) fn invoke_provider_supervisor_restart(_child_type: &str, _strategy: &str) {}
+
+/// Memory usage metrics.
+///
+/// Note: Rust does not provide built-in per-actor memory tracking.
+/// These metrics provide system-level memory usage and mailbox size estimation.
+/// For detailed memory profiling, use external tools like valgrind, heaptrack,
+/// or Rust-specific tools like dhat-rs.
+pub struct MemoryMetrics;
+
+impl MemoryMetrics {
+    /// Records system memory usage.
+    ///
+    /// This tracks the process-level memory usage. On Linux, it reads from
+    /// /proc/self/status. On other platforms, this is a no-op.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use joerl::telemetry::MemoryMetrics;
+    ///
+    /// // Periodically update memory metrics
+    /// MemoryMetrics::update_system_memory();
+    /// ```
+    #[inline]
+    pub fn update_system_memory() {
+        #[cfg(all(feature = "telemetry", target_os = "linux"))]
+        {
+            if let Ok(memory_kb) = Self::get_process_memory_linux() {
+                gauge!("joerl_system_memory_bytes").set(memory_kb as f64 * 1024.0);
+            }
+        }
+    }
+
+    /// Gets process memory usage on Linux from /proc/self/status.
+    #[cfg(all(feature = "telemetry", target_os = "linux"))]
+    fn get_process_memory_linux() -> Result<usize, std::io::Error> {
+        use std::fs;
+        let status = fs::read_to_string("/proc/self/status")?;
+        for line in status.lines() {
+            if line.starts_with("VmRSS:") {
+                // Extract the number (in kB)
+                if let Some(value) = line.split_whitespace().nth(1) {
+                    return value
+                        .parse::<usize>()
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e));
+                }
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "VmRSS not found",
+        ))
+    }
+
+    /// Records estimated mailbox memory usage.
+    ///
+    /// This provides a rough estimation based on mailbox depth.
+    /// The actual per-message size varies greatly.
+    ///
+    /// # Arguments
+    ///
+    /// * `actor_type` - The type of actor
+    /// * `depth` - Current mailbox depth
+    /// * `avg_message_size` - Average message size in bytes (estimate)
+    #[inline]
+    pub fn mailbox_memory_typed(actor_type: &str, _depth: usize, _avg_message_size: usize) {
+        #[cfg(feature = "telemetry")]
+        {
+            let estimated_bytes = _depth * _avg_message_size;
+            gauge!("joerl_mailbox_memory_bytes", "type" => actor_type.to_string())
+                .set(estimated_bytes as f64);
+        }
+    }
+
+    /// Records total mailbox memory estimation across all actors.
+    #[inline]
+    pub fn total_mailbox_memory(_total_bytes: usize) {
+        #[cfg(feature = "telemetry")]
+        gauge!("joerl_mailbox_memory_total_bytes").set(_total_bytes as f64);
+    }
 }
 
 /// Initializes telemetry subsystem.

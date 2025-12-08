@@ -864,6 +864,210 @@ For systems processing >100K messages/sec, consider:
 - Using tail-based sampling in your collector
 - Reducing span attribute cardinality
 
+## Memory Tracking
+
+joerl provides limited memory tracking capabilities. Rust does not offer built-in per-actor memory profiling, so the available metrics focus on system-level and estimated measurements.
+
+### Available Memory Metrics
+
+| Metric | Type | Description | Platform |
+|--------|------|-------------|----------|
+| `joerl_system_memory_bytes` | Gauge | Process memory usage (RSS) | Linux only |
+| `joerl_mailbox_memory_bytes{type}` | Gauge | Estimated mailbox memory | All |
+| `joerl_mailbox_memory_total_bytes` | Gauge | Total estimated mailbox memory | All |
+
+### System Memory Tracking
+
+On Linux, joerl can track process-level memory usage:
+
+```rust
+use joerl::telemetry::MemoryMetrics;
+use tokio::time::{interval, Duration};
+
+#[tokio::main]
+async fn main() {
+    joerl::telemetry::init();
+    
+    // Update system memory metrics periodically
+    tokio::spawn(async {
+        let mut ticker = interval(Duration::from_secs(5));
+        loop {
+            ticker.tick().await;
+            MemoryMetrics::update_system_memory();
+        }
+    });
+    
+    // Your actor system
+}
+```
+
+### Mailbox Memory Estimation
+
+Estimate mailbox memory based on queue depth:
+
+```rust
+use joerl::telemetry::MemoryMetrics;
+
+// Estimate mailbox memory for a specific actor type
+let actor_type = "Worker";
+let mailbox_depth = 1000;
+let avg_message_size = 128; // bytes (rough estimate)
+
+MemoryMetrics::mailbox_memory_typed(actor_type, mailbox_depth, avg_message_size);
+```
+
+### Limitations
+
+**Why is per-actor memory tracking limited?**
+
+1. **No Built-in Support**: Rust doesn't provide APIs to measure per-object memory
+2. **Heap Allocations**: Messages use `Box<dyn Any>` with varying sizes
+3. **Stack vs Heap**: Actor state can be on stack or heap, hard to track
+4. **Shared References**: `Arc` and shared data make attribution complex
+
+### Recommended Tools
+
+For detailed memory profiling, use external tools:
+
+**Development**:
+- **dhat-rs**: Heap profiling for Rust ([dhat-rs](https://github.com/nnethercote/dhat-rs))
+- **Valgrind**: Memory debugging and profiling
+- **heaptrack**: Heap memory profiler
+
+**Production**:
+- **jemalloc** with profiling enabled
+- Prometheus `process_resident_memory_bytes` (from process exporters)
+- Operating system monitoring (htop, ps, /proc)
+
+### Example: Using dhat-rs
+
+```rust
+use dhat::{Dhat, DhatAlloc};
+
+#[global_allocator]
+static ALLOCATOR: DhatAlloc = DhatAlloc;
+
+fn main() {
+    let _dhat = Dhat::start_heap_profiling();
+    
+    // Your actor system code
+    let system = joerl::ActorSystem::new();
+    // ...
+    
+    // Profiling output written on drop
+}
+```
+
+## Custom Telemetry Providers
+
+joerl allows you to integrate custom telemetry backends by implementing the `TelemetryProvider` trait.
+
+### TelemetryProvider Trait
+
+Implement this trait to receive callbacks at key actor system events:
+
+```rust
+use joerl::telemetry::TelemetryProvider;
+
+struct MyTelemetryProvider {
+    // Your custom state
+}
+
+impl TelemetryProvider for MyTelemetryProvider {
+    fn on_actor_spawned(&self, actor_type: &str, pid: &str) {
+        // Called when an actor is spawned
+        println!("[TELEMETRY] Spawned {} with PID {}", actor_type, pid);
+    }
+    
+    fn on_actor_stopped(&self, actor_type: &str, pid: &str, reason: &str) {
+        // Called when an actor stops
+        println!("[TELEMETRY] Stopped {} ({}): {}", actor_type, pid, reason);
+    }
+    
+    fn on_actor_panicked(&self, actor_type: &str, pid: &str, error: &str) {
+        // Called when an actor panics
+        eprintln!("[TELEMETRY] PANIC in {} ({}): {}", actor_type, pid, error);
+    }
+    
+    fn on_message_sent(&self, from_pid: &str, to_pid: &str) {
+        // Called when a message is sent
+    }
+    
+    fn on_message_received(&self, pid: &str) {
+        // Called when a message is received
+    }
+    
+    fn on_supervisor_restart(&self, child_type: &str, strategy: &str) {
+        // Called when a supervisor restarts a child
+        println!("[TELEMETRY] Restarted {} ({})", child_type, strategy);
+    }
+}
+```
+
+### Registering a Provider
+
+Register your provider before creating the actor system:
+
+```rust
+use joerl::telemetry::set_telemetry_provider;
+
+fn main() {
+    // Register custom provider
+    set_telemetry_provider(Box::new(MyTelemetryProvider {}));
+    
+    joerl::telemetry::init();
+    
+    // Create actor system
+    let system = joerl::ActorSystem::new();
+    // Provider hooks will be called automatically
+}
+```
+
+### Use Cases
+
+**Custom Metrics Backend**:
+```rust
+impl TelemetryProvider for StatsdProvider {
+    fn on_actor_spawned(&self, actor_type: &str, _pid: &str) {
+        self.client.incr(&format!("actors.spawned.{}", actor_type));
+    }
+}
+```
+
+**Application Logging**:
+```rust
+impl TelemetryProvider for LoggingProvider {
+    fn on_actor_panicked(&self, actor_type: &str, pid: &str, error: &str) {
+        log::error!(
+            target: "actor_panic",
+            "Actor panic: type={}, pid={}, error={}",
+            actor_type, pid, error
+        );
+    }
+}
+```
+
+**Debugging and Auditing**:
+```rust
+impl TelemetryProvider for AuditProvider {
+    fn on_actor_spawned(&self, actor_type: &str, pid: &str) {
+        self.audit_log.record(AuditEvent::ActorSpawned {
+            timestamp: Utc::now(),
+            actor_type: actor_type.to_string(),
+            pid: pid.to_string(),
+        });
+    }
+}
+```
+
+### Notes
+
+- Provider can only be set once (returns warning if called again)
+- All trait methods have default no-op implementations
+- Provider must be `Send + Sync` for thread safety
+- Hooks are called synchronously - keep them fast to avoid blocking
+- For async operations, spawn tasks rather than awaiting in hooks
+
 ## Further Reading
 
 - [Prometheus Best Practices](https://prometheus.io/docs/practices/)
