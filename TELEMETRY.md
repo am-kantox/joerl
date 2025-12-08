@@ -71,6 +71,7 @@ joerl automatically tracks the following metrics when telemetry is enabled:
 | `joerl_messages_sent_failed_total` | Counter | Failed message send attempts | `reason` |
 | `joerl_messages_processed_total` | Counter | Total messages processed | - |
 | `joerl_message_processing_duration_seconds` | Histogram | Message processing latency | - |
+| `joerl_message_queue_wait_seconds` | Histogram | Time messages spend in queue | - |
 
 **Failure reason labels**: `mailbox_full`, `actor_not_found`
 
@@ -316,6 +317,22 @@ topk(5, rate(joerl_exit_signals_by_reason_total[5m]) by (reason))
 # Signal ignore ratio (trapped vs total)
 rate(joerl_signals_ignored_total[5m]) /
 (rate(joerl_signals_received_total[5m]) + 0.001)
+
+# Message queue wait time (backlog)
+rate(joerl_message_queue_wait_seconds_sum[1m]) /
+rate(joerl_message_queue_wait_seconds_count[1m])
+
+# Processing time vs queue wait time
+rate(joerl_message_processing_duration_seconds_sum[1m]) /
+rate(joerl_message_processing_duration_seconds_count[1m])
+
+# Queue wait time percentiles
+histogram_quantile(0.50, rate(joerl_message_queue_wait_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(joerl_message_queue_wait_seconds_bucket[5m]))
+histogram_quantile(0.99, rate(joerl_message_queue_wait_seconds_bucket[5m]))
+
+# Identify actors with high queue backlog (wait > processing)
+# Compare queue wait vs processing duration to find backlog hotspots
 ```
 
 ### Datadog

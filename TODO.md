@@ -166,16 +166,29 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ---
 
-### 7. Message Queue Wait Time
-**Status**: Not started  
+### 7. Message Queue Wait Time ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Medium-term  
 **Value**: Distinguish between slow processing vs. queue backlog
 
 **Implementation**:
-- [ ] Add timestamp to `Envelope` when enqueued
-- [ ] Calculate wait time when dequeued
-- [ ] Add `joerl_message_queue_wait_seconds` histogram
-- [ ] Compare with `joerl_message_processing_duration_seconds`
+- [x] Restructure `Envelope` to include enqueue timestamp (conditional on telemetry)
+- [x] Add `EnvelopeContent` enum to wrap Message or Signal
+- [x] Calculate wait time when envelope is dequeued
+- [x] Add `message_queue_wait()` method to MessageMetrics
+- [x] Track `joerl_message_queue_wait_seconds` histogram
+- [x] Update TELEMETRY.md with PromQL queries for queue analysis
+
+**Result**: Can now distinguish between queue backlog and slow message processing, identifying backpressure hotspots.
+
+**Metric added**:
+- `joerl_message_queue_wait_seconds` - histogram of time messages spend in queue before processing
+
+**Files modified**:
+- `joerl/src/message.rs` - Restructured Envelope with timestamp and content
+- `joerl/src/system.rs` - Calculate and record queue wait time on dequeue
+- `joerl/src/telemetry.rs` - Added message_queue_wait() method
+- `TELEMETRY.md` - Added metric table and PromQL queries
 
 ---
 
@@ -249,9 +262,9 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## Progress Summary
 
-- **Completed**: 5/12 (41.7%)
+- **Completed**: 6/12 (50%)
 - **In Progress**: 0/12
-- **Not Started**: 7/12
+- **Not Started**: 6/12
 
 ---
 
@@ -267,9 +280,9 @@ This document tracks planned enhancements to joerl's telemetry system.
 5. ✅ **Signal-Specific Metrics** (#5) - COMPLETED
 6. ✅ **Actor Lifetime Statistics** (#6) - COMPLETED
 
-### Phase 3: Performance & Optimization (Medium-term)
-7. **Sampling Configuration** (#8)
-8. **Message Queue Wait Time** (#7)
+### Phase 3: Performance & Optimization (Medium-term) - In Progress
+7. **Sampling Configuration** (#8) - Next priority
+8. ✅ **Message Queue Wait Time** (#7) - COMPLETED
 
 ### Phase 4: Advanced Features (Long-term)
 9. **OpenTelemetry Span Integration** (#10)

@@ -27,6 +27,7 @@
 //! - `joerl_messages_sent_failed_total`: Failed message send attempts
 //! - `joerl_messages_processed_total`: Total messages processed
 //! - `joerl_message_processing_duration_seconds`: Message processing time histogram
+//! - `joerl_message_queue_wait_seconds`: Time messages spend in queue before processing
 //!
 //! ### Mailboxes
 //! - `joerl_mailbox_depth`: Current mailbox depth (gauge)
@@ -233,6 +234,13 @@ impl MessageMetrics {
     #[inline]
     pub fn message_processing_span() -> TelemetrySpan {
         TelemetrySpan::new("joerl_message_processing_duration_seconds")
+    }
+
+    /// Records message queue wait time.
+    #[inline]
+    pub fn message_queue_wait(wait_time_secs: f64) {
+        #[cfg(feature = "telemetry")]
+        histogram!("joerl_message_queue_wait_seconds").record(wait_time_secs);
     }
 
     /// Updates mailbox depth gauge with actor type.

@@ -196,7 +196,15 @@ impl fmt::Display for MonitorRef {
 
 /// Internal message envelope that wraps both user messages and system signals.
 #[derive(Debug)]
-pub(crate) enum Envelope {
+pub(crate) struct Envelope {
+    pub(crate) content: EnvelopeContent,
+    #[cfg(feature = "telemetry")]
+    pub(crate) enqueued_at: std::time::Instant,
+}
+
+/// The actual content of an envelope (message or signal).
+#[derive(Debug)]
+pub(crate) enum EnvelopeContent {
     /// User message.
     Message(Message),
     /// System signal.
@@ -205,11 +213,19 @@ pub(crate) enum Envelope {
 
 impl Envelope {
     pub(crate) fn message(msg: Message) -> Self {
-        Envelope::Message(msg)
+        Envelope {
+            content: EnvelopeContent::Message(msg),
+            #[cfg(feature = "telemetry")]
+            enqueued_at: std::time::Instant::now(),
+        }
     }
 
     pub(crate) fn signal(signal: Signal) -> Self {
-        Envelope::Signal(signal)
+        Envelope {
+            content: EnvelopeContent::Signal(signal),
+            #[cfg(feature = "telemetry")]
+            enqueued_at: std::time::Instant::now(),
+        }
     }
 }
 

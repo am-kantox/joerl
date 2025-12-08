@@ -10,7 +10,7 @@ use crate::Pid;
 use crate::actor::{Actor, ActorContext};
 use crate::error::{ActorError, Result};
 use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox, MailboxSender};
-use crate::message::{Envelope, ExitReason, Message, MonitorRef, Signal};
+use crate::message::{Envelope, EnvelopeContent, ExitReason, Message, MonitorRef, Signal};
 use crate::telemetry::{ActorMetrics, LinkMetrics, MessageMetrics, SignalMetrics};
 use dashmap::DashMap;
 use futures::FutureExt;
@@ -421,33 +421,44 @@ impl ActorSystem {
                 // Main message loop
                 let exit_reason = loop {
                     match ctx.recv().await {
-                        Some(Envelope::Message(msg)) => {
-                            let _span = MessageMetrics::message_processing_span();
-                            actor.handle_message(msg, &mut ctx).await;
-                            MessageMetrics::message_processed();
-                        }
-                        Some(Envelope::Signal(signal)) => {
-                            // Telemetry: track signal reception
-                            let signal_type = match &signal {
-                                Signal::Exit { .. } => "exit",
-                                Signal::Down { .. } => "down",
-                                Signal::Stop => "stop",
-                                Signal::Kill => "kill",
-                            };
-                            SignalMetrics::signal_received(signal_type);
-
-                            // Check if signal will be ignored (trapped)
-                            let is_trapped = if let Signal::Exit { reason, .. } = &signal {
-                                ctx.is_trapping_exits() && reason.is_trappable()
-                            } else {
-                                false
-                            };
-
-                            if is_trapped {
-                                SignalMetrics::signal_ignored(signal_type);
+                        Some(envelope) => {
+                            // Track queue wait time
+                            #[cfg(feature = "telemetry")]
+                            {
+                                let wait_time = envelope.enqueued_at.elapsed().as_secs_f64();
+                                MessageMetrics::message_queue_wait(wait_time);
                             }
 
-                            actor.handle_signal(signal, &mut ctx).await;
+                            match envelope.content {
+                                EnvelopeContent::Message(msg) => {
+                                    let _span = MessageMetrics::message_processing_span();
+                                    actor.handle_message(msg, &mut ctx).await;
+                                    MessageMetrics::message_processed();
+                                }
+                                EnvelopeContent::Signal(signal) => {
+                                    // Telemetry: track signal reception
+                                    let signal_type = match &signal {
+                                        Signal::Exit { .. } => "exit",
+                                        Signal::Down { .. } => "down",
+                                        Signal::Stop => "stop",
+                                        Signal::Kill => "kill",
+                                    };
+                                    SignalMetrics::signal_received(signal_type);
+
+                                    // Check if signal will be ignored (trapped)
+                                    let is_trapped = if let Signal::Exit { reason, .. } = &signal {
+                                        ctx.is_trapping_exits() && reason.is_trappable()
+                                    } else {
+                                        false
+                                    };
+
+                                    if is_trapped {
+                                        SignalMetrics::signal_ignored(signal_type);
+                                    }
+
+                                    actor.handle_signal(signal, &mut ctx).await;
+                                }
+                            }
                         }
                         None => {
                             // Mailbox closed, exit normally
