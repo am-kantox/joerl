@@ -88,6 +88,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(feature = "telemetry")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "telemetry")]
+use tracing::{debug_span, info_span};
+
 /// Configuration for telemetry sampling.
 ///
 /// Sampling reduces overhead in high-throughput systems by only recording
@@ -282,6 +285,44 @@ impl ActorMetrics {
     pub fn actor_panicked() {
         Self::actor_panicked_typed("unknown")
     }
+
+    /// Creates an OpenTelemetry span for actor spawning.
+    #[cfg(feature = "telemetry")]
+    #[inline]
+    pub fn actor_spawn_span(actor_type: &str, pid: &str) -> tracing::Span {
+        info_span!(
+            "actor.spawn",
+            actor.type = actor_type,
+            actor.pid = pid,
+            otel.kind = "internal"
+        )
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    #[inline]
+    pub fn actor_spawn_span(_actor_type: &str, _pid: &str) -> tracing::Span {
+        tracing::Span::none()
+    }
+
+    /// Creates an OpenTelemetry span for actor lifecycle events.
+    #[cfg(feature = "telemetry")]
+    #[inline]
+    pub fn actor_lifecycle_span(event: &str, actor_type: &str, pid: &str) -> tracing::Span {
+        info_span!(
+            "actor.lifecycle",
+            actor.event = event,
+            actor.type = actor_type,
+            actor.pid = pid
+        )
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    #[inline]
+    pub fn actor_lifecycle_span(_event: &str, _actor_type: &str, _pid: &str) -> tracing::Span {
+        tracing::Span::none()
+    }
 }
 
 /// Message and mailbox metrics.
@@ -380,6 +421,51 @@ impl MessageMetrics {
     pub fn mailbox_full() {
         #[cfg(feature = "telemetry")]
         counter!("joerl_mailbox_full_total").increment(1);
+    }
+
+    /// Creates an OpenTelemetry span for message sending.
+    #[cfg(feature = "telemetry")]
+    #[inline]
+    pub fn message_send_span(from_pid: &str, to_pid: &str) -> tracing::Span {
+        debug_span!(
+            "message.send",
+            messaging.operation = "send",
+            messaging.system = "joerl",
+            actor.from_pid = from_pid,
+            actor.to_pid = to_pid,
+            otel.kind = "producer"
+        )
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    #[inline]
+    pub fn message_send_span(_from_pid: &str, _to_pid: &str) -> tracing::Span {
+        tracing::Span::none()
+    }
+
+    /// Creates an OpenTelemetry span for message receiving.
+    /// If parent_span_id is provided, it will be recorded as a span attribute for linking.
+    #[cfg(feature = "telemetry")]
+    #[inline]
+    pub fn message_receive_span(to_pid: &str, parent_span_id: Option<&str>) -> tracing::Span {
+        let span = debug_span!(
+            "message.receive",
+            messaging.operation = "receive",
+            messaging.system = "joerl",
+            actor.pid = to_pid,
+            parent.span.id = parent_span_id.unwrap_or("none"),
+            otel.kind = "consumer"
+        );
+
+        span
+    }
+
+    /// No-op when telemetry is disabled.
+    #[cfg(not(feature = "telemetry"))]
+    #[inline]
+    pub fn message_receive_span(_to_pid: &str, _parent_span_id: Option<&str>) -> tracing::Span {
+        tracing::Span::none()
     }
 }
 

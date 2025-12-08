@@ -8,6 +8,9 @@ use crate::Pid;
 use std::any::Any;
 use std::fmt;
 
+#[cfg(feature = "telemetry")]
+use tracing::Span;
+
 /// A message that can be sent between actors.
 ///
 /// In Erlang, any term can be sent as a message. We use `Box<dyn Any>` to achieve
@@ -200,6 +203,9 @@ pub(crate) struct Envelope {
     pub(crate) content: EnvelopeContent,
     #[cfg(feature = "telemetry")]
     pub(crate) enqueued_at: std::time::Instant,
+    #[cfg(feature = "telemetry")]
+    #[allow(dead_code)] // TODO: Integrate span propagation in actor system
+    pub(crate) parent_span_id: Option<String>,
 }
 
 /// The actual content of an envelope (message or signal).
@@ -217,6 +223,8 @@ impl Envelope {
             content: EnvelopeContent::Message(msg),
             #[cfg(feature = "telemetry")]
             enqueued_at: std::time::Instant::now(),
+            #[cfg(feature = "telemetry")]
+            parent_span_id: Self::capture_span_id(),
         }
     }
 
@@ -225,7 +233,29 @@ impl Envelope {
             content: EnvelopeContent::Signal(signal),
             #[cfg(feature = "telemetry")]
             enqueued_at: std::time::Instant::now(),
+            #[cfg(feature = "telemetry")]
+            parent_span_id: Self::capture_span_id(),
         }
+    }
+
+    /// Captures the current span ID for trace propagation.
+    /// This creates a link between the sending and receiving spans.
+    #[cfg(feature = "telemetry")]
+    fn capture_span_id() -> Option<String> {
+        let current_span = Span::current();
+        if current_span.is_disabled() {
+            None
+        } else {
+            // Store span name/id as a simple string for linking
+            Some(format!("{:?}", current_span.id()?))
+        }
+    }
+
+    /// Returns the parent span ID if available.
+    #[cfg(feature = "telemetry")]
+    #[allow(dead_code)] // TODO: Integrate span propagation in actor system
+    pub(crate) fn parent_span_id(&self) -> Option<&str> {
+        self.parent_span_id.as_deref()
     }
 }
 

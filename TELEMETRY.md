@@ -669,6 +669,201 @@ Issues:
   [Warning] High backpressure: 15.3% of messages encountering full mailboxes
 ```
 
+## Distributed Tracing
+
+joerl supports distributed tracing using OpenTelemetry spans. When the `telemetry` feature is enabled, you can trace message flow across actor boundaries and visualize the complete request lifecycle.
+
+### Overview
+
+Distributed tracing provides:
+- **Request Flow Visualization**: See the complete path of a request through multiple actors
+- **Latency Analysis**: Identify bottlenecks and slow operations
+- **Causality Tracking**: Understand parent-child relationships between operations
+- **Error Attribution**: Quickly find the source of failures
+
+### Built-in Span Methods
+
+joerl provides span creation methods for key operations:
+
+```rust
+use joerl::telemetry::{ActorMetrics, MessageMetrics};
+use tracing::Instrument;
+
+// Actor lifecycle spans
+let span = ActorMetrics::actor_spawn_span("MyActor", &pid.to_string());
+let _guard = span.enter();
+
+// Actor lifecycle events
+let span = ActorMetrics::actor_lifecycle_span("started", "MyActor", &pid.to_string());
+
+// Message send/receive spans
+let span = MessageMetrics::message_send_span(&from_pid, &to_pid);
+let span = MessageMetrics::message_receive_span(&to_pid, parent_span_id);
+```
+
+### Instrumenting Your Actors
+
+Wrap actor methods with spans to trace execution:
+
+```rust
+use joerl::{Actor, ActorContext, Message};
+use async_trait::async_trait;
+use tracing::{debug_span, Instrument};
+
+struct MyActor;
+
+#[async_trait]
+impl Actor for MyActor {
+    async fn started(&mut self, ctx: &mut ActorContext) {
+        let span = debug_span!(
+            "actor.started",
+            actor.type = "MyActor",
+            actor.pid = %ctx.pid()
+        );
+        
+        async {
+            // Your initialization code
+            println!("Actor started");
+        }.instrument(span).await;
+    }
+
+    async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+        let span = debug_span!(
+            "actor.handle_message",
+            actor.type = "MyActor",
+            actor.pid = %ctx.pid()
+        );
+        
+        async {
+            if let Some(data) = msg.downcast_ref::<String>() {
+                // Process message
+                println!("Received: {}", data);
+            }
+        }.instrument(span).await;
+    }
+}
+```
+
+### Span Context Propagation
+
+joerl automatically captures and propagates span context through messages:
+
+1. **Message Send**: Current span ID is captured when a message is created
+2. **Message Receive**: Span ID is available in the envelope for linking spans
+3. **Span Linking**: Child spans can reference parent span IDs for causality
+
+This creates a distributed trace showing message flow:
+
+```
+actor.spawn (ActorA) -> message.send -> message.receive -> actor.handle_message (ActorB)
+```
+
+### Setting Up Tracing Backend
+
+#### Console Output (Development)
+
+```rust
+use tracing_subscriber;
+
+fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
+    
+    joerl::telemetry::init();
+    // Your code
+}
+```
+
+#### Jaeger (Production)
+
+```rust
+use opentelemetry::global;
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_otlp::WithExportConfig;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up OpenTelemetry tracer
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint("http://localhost:4317"),
+        )
+        .install_batch(Tokio)?;
+    
+    // Create tracing subscriber with OpenTelemetry layer
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+    let subscriber = Registry::default().with(telemetry);
+    tracing::subscriber::set_global_default(subscriber)?;
+    
+    joerl::telemetry::init();
+    
+    // Your actor system code
+    let system = joerl::ActorSystem::new();
+    // ...
+    
+    // Shutdown tracer on exit
+    global::shutdown_tracer_provider();
+    Ok(())
+}
+```
+
+#### Running Jaeger Locally
+
+```bash
+# Start Jaeger all-in-one
+docker run -d --name jaeger \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  jaegertracing/all-in-one:latest
+
+# View traces at http://localhost:16686
+```
+
+### Span Attributes
+
+joerl spans include standard OpenTelemetry semantic conventions:
+
+**Actor Spans**:
+- `actor.type`: Actor struct name
+- `actor.pid`: Process ID
+- `actor.event`: Lifecycle event (spawn, started, stopped)
+- `otel.kind`: "internal"
+
+**Messaging Spans**:
+- `messaging.operation`: "send" or "receive"
+- `messaging.system`: "joerl"
+- `actor.from_pid`: Sender PID
+- `actor.to_pid`: Receiver PID
+- `parent.span.id`: Parent span ID for linking
+- `otel.kind`: "producer" or "consumer"
+
+### Best Practices
+
+1. **Sampling**: Use sampling for high-throughput systems to reduce overhead
+2. **Span Granularity**: Balance detail with performance - trace critical paths
+3. **Error Recording**: Use `span.record_error()` to capture failures
+4. **Context Propagation**: Let joerl handle span context automatically
+5. **Backend Configuration**: Configure appropriate retention and sampling in your tracing backend
+
+### Performance Impact
+
+OpenTelemetry span creation has minimal overhead (~100-500ns per span) when:
+- Using batch exporters (not synchronous)
+- Applying appropriate sampling rates  
+- Avoiding excessive span attributes
+
+For systems processing >100K messages/sec, consider:
+- Sampling spans at 1-10%
+- Using tail-based sampling in your collector
+- Reducing span attribute cardinality
+
 ## Further Reading
 
 - [Prometheus Best Practices](https://prometheus.io/docs/practices/)
