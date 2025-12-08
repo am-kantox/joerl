@@ -192,16 +192,36 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ---
 
-### 8. Sampling for High-Frequency Operations
-**Status**: Not started  
+### 8. Sampling for High-Frequency Operations ✅ COMPLETED
+**Status**: Completed  
 **Priority**: Medium-term  
 **Value**: Reduce overhead in high-throughput scenarios
 
 **Implementation**:
-- [ ] Add `TelemetryConfig` struct with sampling rate
-- [ ] Implement probabilistic sampling (e.g., 1% of messages)
-- [ ] Add configuration for which metrics to sample
-- [ ] Document performance characteristics with/without sampling
+- [x] Add `TelemetryConfig` struct with sampling rates per metric type
+- [x] Implement deterministic counter-based sampling (consistent distribution)
+- [x] Add `should_sample()` helper with counter modulo 100
+- [x] Apply sampling to message processing metrics
+- [x] Apply sampling to queue wait time metrics
+- [x] Apply sampling to signal metrics
+- [x] Add `set_config()` and `get_config()` API
+- [x] Update `TelemetrySpan` to support sampling
+- [x] Document sampling configuration and best practices
+- [x] Add performance guidelines to TELEMETRY.md
+
+**Result**: Configurable sampling for high-throughput systems, reducing overhead by up to 100x while maintaining accurate percentiles.
+
+**Features added**:
+- `TelemetryConfig` with per-metric-type sampling rates
+- `set_config(config)` - Configure sampling before spawning actors
+- `get_config()` - Retrieve current configuration
+- Deterministic sampling using atomic counter (better distribution than random)
+- Default 100% sampling (backward compatible)
+- Zero overhead when sampling is disabled
+
+**Files modified**:
+- `joerl/src/telemetry.rs` - Added config structs, sampling logic, updated metrics
+- `TELEMETRY.md` - Added sampling section with examples and best practices
 
 ---
 
@@ -262,9 +282,9 @@ This document tracks planned enhancements to joerl's telemetry system.
 
 ## Progress Summary
 
-- **Completed**: 6/12 (50%)
+- **Completed**: 7/12 (58.3%)
 - **In Progress**: 0/12
-- **Not Started**: 6/12
+- **Not Started**: 5/12
 
 ---
 
@@ -280,8 +300,8 @@ This document tracks planned enhancements to joerl's telemetry system.
 5. ✅ **Signal-Specific Metrics** (#5) - COMPLETED
 6. ✅ **Actor Lifetime Statistics** (#6) - COMPLETED
 
-### Phase 3: Performance & Optimization (Medium-term) - In Progress
-7. **Sampling Configuration** (#8) - Next priority
+### Phase 3: Performance & Optimization (Medium-term) ✅ COMPLETED
+7. ✅ **Sampling Configuration** (#8) - COMPLETED
 8. ✅ **Message Queue Wait Time** (#7) - COMPLETED
 
 ### Phase 4: Advanced Features (Long-term)

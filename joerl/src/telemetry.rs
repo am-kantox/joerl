@@ -82,6 +82,64 @@ use std::time::Instant;
 #[cfg(feature = "telemetry")]
 use metrics::{counter, gauge, histogram};
 
+#[cfg(feature = "telemetry")]
+use std::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(feature = "telemetry")]
+use std::sync::OnceLock;
+
+/// Configuration for telemetry sampling.
+///
+/// Sampling reduces overhead in high-throughput systems by only recording
+/// a percentage of metrics. This is especially useful for high-frequency
+/// operations like message processing.
+///
+/// Sampling rates are expressed as percentages (0-100):
+/// - 100 = record all events (default, no sampling)
+/// - 50 = record 50% of events
+/// - 10 = record 10% of events
+/// - 1 = record 1% of events
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::telemetry::TelemetryConfig;
+///
+/// let config = TelemetryConfig {
+///     message_sampling_rate: 10,  // Sample 10% of messages
+///     signal_sampling_rate: 100,  // Sample all signals
+///     ..Default::default()
+/// };
+///
+/// // Apply configuration
+/// joerl::telemetry::set_config(config);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct TelemetryConfig {
+    /// Sampling rate for message processing metrics (0-100%)
+    pub message_sampling_rate: u32,
+    /// Sampling rate for signal metrics (0-100%)
+    pub signal_sampling_rate: u32,
+    /// Sampling rate for queue wait time metrics (0-100%)
+    pub queue_wait_sampling_rate: u32,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            message_sampling_rate: 100,
+            signal_sampling_rate: 100,
+            queue_wait_sampling_rate: 100,
+        }
+    }
+}
+
+#[cfg(feature = "telemetry")]
+static TELEMETRY_CONFIG: OnceLock<TelemetryConfig> = OnceLock::new();
+
+#[cfg(feature = "telemetry")]
+static SAMPLE_COUNTER: AtomicU32 = AtomicU32::new(0);
+
 /// Telemetry context for tracking operation duration.
 ///
 /// This struct automatically records the duration when dropped.
@@ -90,6 +148,8 @@ pub struct TelemetrySpan {
     start: Instant,
     #[cfg(feature = "telemetry")]
     metric_name: &'static str,
+    #[cfg(feature = "telemetry")]
+    should_record: bool,
 }
 
 impl TelemetrySpan {
@@ -101,14 +161,31 @@ impl TelemetrySpan {
             start: Instant::now(),
             #[cfg(feature = "telemetry")]
             metric_name: _metric_name,
+            #[cfg(feature = "telemetry")]
+            should_record: true,
+        }
+    }
+
+    /// Creates a new telemetry span with explicit sampling control.
+    #[inline]
+    pub fn new_sampled(_metric_name: &'static str, _should_record: bool) -> Self {
+        Self {
+            #[cfg(feature = "telemetry")]
+            start: Instant::now(),
+            #[cfg(feature = "telemetry")]
+            metric_name: _metric_name,
+            #[cfg(feature = "telemetry")]
+            should_record: _should_record,
         }
     }
 
     /// Records the span duration and finishes it.
     #[cfg(feature = "telemetry")]
     pub fn finish(self) {
-        let duration = self.start.elapsed();
-        histogram!(self.metric_name).record(duration.as_secs_f64());
+        if self.should_record {
+            let duration = self.start.elapsed();
+            histogram!(self.metric_name).record(duration.as_secs_f64());
+        }
     }
 
     /// No-op when telemetry is disabled.
@@ -119,8 +196,10 @@ impl TelemetrySpan {
 #[cfg(feature = "telemetry")]
 impl Drop for TelemetrySpan {
     fn drop(&mut self) {
-        let duration = self.start.elapsed();
-        histogram!(self.metric_name).record(duration.as_secs_f64());
+        if self.should_record {
+            let duration = self.start.elapsed();
+            histogram!(self.metric_name).record(duration.as_secs_f64());
+        }
     }
 }
 
@@ -227,20 +306,42 @@ impl MessageMetrics {
     #[inline]
     pub fn message_processed() {
         #[cfg(feature = "telemetry")]
-        counter!("joerl_messages_processed_total").increment(1);
+        {
+            let config = get_config();
+            if should_sample(config.message_sampling_rate) {
+                counter!("joerl_messages_processed_total").increment(1);
+            }
+        }
     }
 
     /// Creates a span for tracking message processing duration.
+    ///
+    /// Note: Sampling is applied when the span is dropped/finished.
     #[inline]
     pub fn message_processing_span() -> TelemetrySpan {
-        TelemetrySpan::new("joerl_message_processing_duration_seconds")
+        #[cfg(feature = "telemetry")]
+        {
+            let config = get_config();
+            if should_sample(config.message_sampling_rate) {
+                return TelemetrySpan::new_sampled(
+                    "joerl_message_processing_duration_seconds",
+                    true,
+                );
+            }
+        }
+        TelemetrySpan::new_sampled("joerl_message_processing_duration_seconds", false)
     }
 
     /// Records message queue wait time.
     #[inline]
     pub fn message_queue_wait(wait_time_secs: f64) {
         #[cfg(feature = "telemetry")]
-        histogram!("joerl_message_queue_wait_seconds").record(wait_time_secs);
+        {
+            let config = get_config();
+            if should_sample(config.queue_wait_sampling_rate) {
+                histogram!("joerl_message_queue_wait_seconds").record(wait_time_secs);
+            }
+        }
     }
 
     /// Updates mailbox depth gauge with actor type.
@@ -413,21 +514,39 @@ impl SignalMetrics {
     #[inline]
     pub fn signal_sent(signal_type: &str) {
         #[cfg(feature = "telemetry")]
-        counter!("joerl_signals_sent_total", "type" => signal_type.to_string()).increment(1);
+        {
+            let config = get_config();
+            if should_sample(config.signal_sampling_rate) {
+                counter!("joerl_signals_sent_total", "type" => signal_type.to_string())
+                    .increment(1);
+            }
+        }
     }
 
     /// Records a signal received by an actor.
     #[inline]
     pub fn signal_received(signal_type: &str) {
         #[cfg(feature = "telemetry")]
-        counter!("joerl_signals_received_total", "type" => signal_type.to_string()).increment(1);
+        {
+            let config = get_config();
+            if should_sample(config.signal_sampling_rate) {
+                counter!("joerl_signals_received_total", "type" => signal_type.to_string())
+                    .increment(1);
+            }
+        }
     }
 
     /// Records a signal that was ignored (trapped).
     #[inline]
     pub fn signal_ignored(signal_type: &str) {
         #[cfg(feature = "telemetry")]
-        counter!("joerl_signals_ignored_total", "type" => signal_type.to_string()).increment(1);
+        {
+            let config = get_config();
+            if should_sample(config.signal_sampling_rate) {
+                counter!("joerl_signals_ignored_total", "type" => signal_type.to_string())
+                    .increment(1);
+            }
+        }
     }
 
     /// Records an exit signal with its reason.
@@ -537,6 +656,69 @@ impl Drop for GenStatemStateSpan {
     }
 }
 
+/// Sets the telemetry configuration.
+///
+/// This configures sampling rates for different metric types. Must be called
+/// before spawning actors to take effect. Can only be called once.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::telemetry::{TelemetryConfig, set_config};
+///
+/// // Configure 10% sampling for high-frequency operations
+/// let config = TelemetryConfig {
+///     message_sampling_rate: 10,
+///     queue_wait_sampling_rate: 10,
+///     signal_sampling_rate: 100,  // Keep signals at 100%
+/// };
+///
+/// set_config(config);
+/// ```
+pub fn set_config(config: TelemetryConfig) {
+    #[cfg(feature = "telemetry")]
+    {
+        if TELEMETRY_CONFIG.set(config).is_err() {
+            tracing::warn!("Telemetry config already set, ignoring new config");
+        } else {
+            tracing::info!(
+                "Telemetry config set: messages={}%, signals={}%, queue_wait={}%",
+                config.message_sampling_rate,
+                config.signal_sampling_rate,
+                config.queue_wait_sampling_rate
+            );
+        }
+    }
+}
+
+/// Gets the current telemetry configuration.
+pub fn get_config() -> TelemetryConfig {
+    #[cfg(feature = "telemetry")]
+    {
+        *TELEMETRY_CONFIG.get_or_init(TelemetryConfig::default)
+    }
+    #[cfg(not(feature = "telemetry"))]
+    TelemetryConfig::default()
+}
+
+/// Determines if a sample should be recorded based on sampling rate.
+///
+/// Uses a deterministic counter-based approach for consistent sampling.
+#[cfg(feature = "telemetry")]
+#[inline]
+fn should_sample(rate: u32) -> bool {
+    if rate >= 100 {
+        return true;
+    }
+    if rate == 0 {
+        return false;
+    }
+
+    // Use counter modulo 100 for deterministic sampling
+    let counter = SAMPLE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    (counter % 100) < rate
+}
+
 /// Initializes telemetry subsystem.
 ///
 /// This is a no-op when the `telemetry` feature is disabled.
@@ -560,6 +742,8 @@ impl Drop for GenStatemStateSpan {
 pub fn init() {
     #[cfg(feature = "telemetry")]
     {
+        // Initialize config with defaults
+        let _ = TELEMETRY_CONFIG.get_or_init(TelemetryConfig::default);
         tracing::info!("joerl telemetry initialized");
     }
 }

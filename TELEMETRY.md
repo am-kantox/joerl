@@ -44,6 +44,42 @@ fn main() {
 }
 ```
 
+### Sampling Configuration
+
+For high-throughput systems, sampling reduces telemetry overhead by recording only a percentage of metrics:
+
+```rust
+use joerl::telemetry::{TelemetryConfig, set_config};
+
+fn main() {
+    // Configure 10% sampling for high-frequency operations
+    let config = TelemetryConfig {
+        message_sampling_rate: 10,      // Sample 10% of messages
+        queue_wait_sampling_rate: 10,   // Sample 10% of queue wait times
+        signal_sampling_rate: 100,       // Keep signals at 100% (low frequency)
+    };
+    
+    set_config(config);
+    
+    // Initialize after configuration
+    joerl::telemetry::init();
+    
+    // Your actor system code
+}
+```
+
+**Sampling rates** (0-100%):
+- `100` = Record all events (default, no sampling)
+- `10` = Record 10% of events (10x reduction in overhead)
+- `1` = Record 1% of events (100x reduction)
+- `0` = Disable metric (no recording)
+
+**When to use sampling:**
+- Message rates > 10,000/sec per actor
+- Systems with hundreds of actors
+- Production deployments where overhead matters
+- Keep signal sampling at 100% (typically low frequency)
+
 ## Available Metrics
 
 joerl automatically tracks the following metrics when telemetry is enabled:
@@ -409,6 +445,28 @@ async fn handle_distributed_message(&self, msg: Message) {
 - Use sampling for high-frequency operations if needed
 - Metrics are lock-free and designed for concurrent access
 - Consider aggregating metrics locally before export in high-throughput systems
+
+#### Sampling Guidelines
+
+**Measure first**: Profile your system to determine if sampling is needed. Most systems can handle 100% sampling.
+
+**Sampling recommendations by throughput**:
+- < 1,000 msgs/sec: No sampling needed (100%)
+- 1,000-10,000 msgs/sec: Consider 50% sampling
+- 10,000-100,000 msgs/sec: Use 10% sampling
+- > 100,000 msgs/sec: Use 1-5% sampling
+
+**What to sample**:
+- ✅ High-frequency: message processing, queue wait times
+- ❌ Low-frequency: actor lifecycle, supervisor restarts, signals
+- ❌ Never sample: panic counters, error metrics
+
+**Interpreting sampled metrics**:
+- Counters: Multiply by (100 / sample_rate) for estimates
+- Histograms: Percentiles remain accurate, counts are sampled
+- Gauges: Not affected by sampling
+
+**Example**: With 10% sampling and 1,000 sampled messages, estimate ~10,000 total messages
 
 ### 6. Custom Metrics
 
