@@ -414,6 +414,21 @@ impl ActorSystem {
         self.local_node_id
     }
 
+    /// Returns the EPMD client (if distributed).
+    pub(crate) fn epmd_client(&self) -> Option<&EpmdClient> {
+        self.epmd_client.as_ref()
+    }
+
+    /// Returns the node registry (if distributed).
+    pub(crate) fn node_registry(&self) -> Option<&Arc<crate::distributed::NodeRegistry>> {
+        self.node_registry.as_ref()
+    }
+
+    /// Returns the listen address (if distributed).
+    pub(crate) fn listen_address(&self) -> Option<&str> {
+        self.listen_address.as_deref()
+    }
+
     /// Hashes a node name to a node ID.
     ///
     /// This is useful when you need to construct Pids for remote actors.

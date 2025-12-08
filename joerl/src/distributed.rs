@@ -76,6 +76,37 @@ pub enum DistributedError {
 
 pub type Result<T> = std::result::Result<T, DistributedError>;
 
+/// Handshake message sent when establishing a connection.
+///
+/// This is the first message sent on any new connection to exchange node metadata.
+/// The version field allows for future protocol extensions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeMessage {
+    /// Protocol version (currently 1)
+    pub version: u8,
+
+    /// Name of the connecting node
+    pub node_name: String,
+
+    /// Node ID (hash of node_name)
+    pub node_id: u32,
+
+    /// Listen address for reverse connection (e.g., "127.0.0.1:5000")
+    pub listen_address: String,
+}
+
+impl HandshakeMessage {
+    /// Creates a new handshake message.
+    pub fn new(node_name: String, node_id: u32, listen_address: String) -> Self {
+        Self {
+            version: 1,
+            node_name,
+            node_id,
+            listen_address,
+        }
+    }
+}
+
 /// A message wrapper for network transport
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkMessage {
@@ -97,22 +128,36 @@ struct NodeConnection {
 }
 
 impl NodeConnection {
-    /// Creates a new connection to a remote node
-    async fn connect(node_info: NodeInfo) -> Result<Self> {
+    /// Creates a new connection to a remote node and sends handshake.
+    async fn connect(
+        node_info: NodeInfo,
+        local_node_name: String,
+        local_node_id: u32,
+        local_listen_address: String,
+    ) -> Result<Self> {
         let addr = node_info.address();
-        match TcpStream::connect(&addr).await {
-            Ok(stream) => {
-                info!("Connected to remote node {} at {}", node_info.name, addr);
-                Ok(Self {
-                    node_info,
-                    stream: RwLock::new(Some(stream)),
-                })
-            }
-            Err(e) => Err(DistributedError::ConnectionFailed(format!(
-                "Failed to connect to {}: {}",
-                addr, e
-            ))),
-        }
+        let mut stream = TcpStream::connect(&addr).await.map_err(|e| {
+            DistributedError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e))
+        })?;
+
+        info!("Connected to remote node {} at {}", node_info.name, addr);
+
+        // Send handshake immediately
+        let handshake = HandshakeMessage::new(local_node_name, local_node_id, local_listen_address);
+        let handshake_bytes = bincode::serialize(&handshake)
+            .map_err(|e| DistributedError::SerializationError(e.to_string()))?;
+        let len = (handshake_bytes.len() as u32).to_be_bytes();
+
+        stream.write_all(&len).await?;
+        stream.write_all(&handshake_bytes).await?;
+        stream.flush().await?;
+
+        debug!("Sent handshake to {}", node_info.name);
+
+        Ok(Self {
+            node_info,
+            stream: RwLock::new(Some(stream)),
+        })
     }
 
     /// Sends a message to the remote node
@@ -212,7 +257,13 @@ impl NodeRegistry {
     }
 
     /// Gets or creates a connection to a remote node
-    async fn get_or_connect(&self, node_info: NodeInfo) -> Result<Arc<NodeConnection>> {
+    async fn get_or_connect(
+        &self,
+        node_info: NodeInfo,
+        local_node_name: String,
+        local_node_id: u32,
+        local_listen_address: String,
+    ) -> Result<Arc<NodeConnection>> {
         let node_name = node_info.name.clone();
 
         // Check if we already have a connection
@@ -235,11 +286,19 @@ impl NodeRegistry {
             return Ok(Arc::clone(&*conn));
         }
 
-        // Create new connection
-        let conn = Arc::new(NodeConnection::connect(node_info).await?);
+        // Create new connection with handshake
+        let conn = Arc::new(
+            NodeConnection::connect(
+                node_info,
+                local_node_name,
+                local_node_id,
+                local_listen_address,
+            )
+            .await?,
+        );
 
         // Calculate node_id from node_name
-        let node_id = DistributedSystem::hash_node_name(&node_name);
+        let node_id = ActorSystem::hash_node_name(&node_name);
 
         // Insert into all maps
         self.connections_by_name
@@ -454,8 +513,15 @@ impl DistributedSystem {
             .await?
             .ok_or_else(|| DistributedError::NodeNotFound(node_name.to_string()))?;
 
-        // Establish connection
-        self.node_registry.get_or_connect(node_info).await?;
+        // Establish connection with handshake
+        self.node_registry
+            .get_or_connect(
+                node_info,
+                self.node_name.clone(),
+                self.node_id,
+                format!("{}:{}", self.node_name, 0), // Placeholder - DistributedSystem is deprecated
+            )
+            .await?;
 
         Ok(())
     }
@@ -645,9 +711,9 @@ pub async fn connect_to_node(
     epmd_client: &EpmdClient,
     node_registry: &Arc<NodeRegistry>,
     remote_node_name: &str,
-    _local_node_name: &str,
-    _local_node_id: u32,
-    _local_listen_address: &str,
+    local_node_name: &str,
+    local_node_id: u32,
+    local_listen_address: &str,
 ) -> Result<()> {
     // Lookup remote node in EPMD
     let node_info = epmd_client
@@ -655,8 +721,15 @@ pub async fn connect_to_node(
         .await?
         .ok_or_else(|| DistributedError::NodeNotFound(remote_node_name.to_string()))?;
 
-    // Establish connection (will send handshake later when we implement it)
-    node_registry.get_or_connect(node_info).await?;
+    // Establish connection with handshake
+    node_registry
+        .get_or_connect(
+            node_info,
+            local_node_name.to_string(),
+            local_node_id,
+            local_listen_address.to_string(),
+        )
+        .await?;
 
     info!("Connected to remote node {}", remote_node_name);
     Ok(())
@@ -701,14 +774,60 @@ pub async fn accept_connections(
 }
 
 /// Handles messages from a connected remote node.
+///
+/// First message must be a handshake. After handshake, establishes reverse connection
+/// and processes regular messages.
 async fn handle_node_connection(mut stream: TcpStream, system: Arc<ActorSystem>) -> Result<()> {
+    // First message must be handshake
+    let handshake = read_handshake(&mut stream).await?;
+
+    info!(
+        "Received handshake from node {} (id: {}) at {}",
+        handshake.node_name, handshake.node_id, handshake.listen_address
+    );
+
+    // Establish reverse connection if we're distributed
+    if let (Some(local_name), Some(epmd), Some(registry), Some(local_addr)) = (
+        system.node(),
+        system.epmd_client(),
+        system.node_registry(),
+        system.listen_address(),
+    ) {
+        let remote_name = handshake.node_name.clone();
+
+        // Check if we already have a connection to this node
+        if !registry.list_connected_nodes().contains(&remote_name) {
+            debug!("Establishing reverse connection to {}", remote_name);
+
+            // Connect back to the remote node
+            if let Err(e) = connect_to_node(
+                epmd,
+                registry,
+                &remote_name,
+                local_name,
+                system.local_node_id(),
+                local_addr,
+            )
+            .await
+            {
+                warn!(
+                    "Failed to establish reverse connection to {}: {}",
+                    remote_name, e
+                );
+            } else {
+                info!("Established bidirectional connection with {}", remote_name);
+            }
+        }
+    }
+
+    // Process regular messages
     loop {
         // Read message length
         let mut len_buf = [0u8; 4];
         match stream.read_exact(&mut len_buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                debug!("Remote node disconnected");
+                debug!("Remote node {} disconnected", handshake.node_name);
                 return Ok(());
             }
             Err(e) => return Err(e.into()),
@@ -753,6 +872,29 @@ async fn handle_node_connection(mut stream: TcpStream, system: Arc<ActorSystem>)
             }
         }
     }
+}
+
+/// Reads and deserializes a handshake message from the stream.
+async fn read_handshake(stream: &mut TcpStream) -> Result<HandshakeMessage> {
+    // Read message length
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await?;
+
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > 1024 {
+        // Handshake should be small
+        return Err(DistributedError::SerializationError(
+            "Handshake too large".to_string(),
+        ));
+    }
+
+    // Read handshake
+    let mut handshake_buf = vec![0u8; len];
+    stream.read_exact(&mut handshake_buf).await?;
+
+    // Deserialize
+    bincode::deserialize(&handshake_buf)
+        .map_err(|e| DistributedError::SerializationError(format!("Invalid handshake: {}", e)))
 }
 
 #[cfg(test)]
