@@ -5,16 +5,16 @@
 //!
 //! ## Architecture
 //!
-//! - **DistributedSystem**: Extends ActorSystem with node awareness and EPMD integration
 //! - **NodeConnection**: TCP connection to a remote node
 //! - **NodeRegistry**: Manages connections to remote nodes
-//! - **RemoteMessage**: Serializable wrapper for messages sent across nodes
+//! - **NetworkMessage**: Serializable wrapper for messages sent across nodes
 //!
 //! ## Usage
 //!
+//! Use `ActorSystem::new_distributed()` for creating distributed systems:
+//!
 //! ```no_run
-//! use joerl::distributed::DistributedSystem;
-//! use joerl::{Actor, ActorContext, Message};
+//! use joerl::{ActorSystem, Actor, ActorContext, Message};
 //! use async_trait::async_trait;
 //!
 //! struct MyActor;
@@ -27,17 +27,23 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     // Create a distributed system
-//!     let system = DistributedSystem::new("node_a", "127.0.0.1:5000", "127.0.0.1:4369")
-//!         .await
-//!         .expect("Failed to create distributed system");
+//!     let system = ActorSystem::new_distributed(
+//!         "node_a",
+//!         "127.0.0.1:5000",
+//!         "127.0.0.1:4369"
+//!     )
+//!     .await
+//!     .expect("Failed to create distributed system");
 //!     
-//!     // Spawn actors - works the same as before
-//!     let actor = system.system().spawn(MyActor);
+//!     // Spawn actors - same API as local systems
+//!     let actor = system.spawn(MyActor);
 //!     
 //!     // Send messages - transparently works for local and remote actors
 //!     actor.send(Box::new("Hello")).await.ok();
 //! }
 //! ```
+//!
+//! **Note**: `DistributedSystem` is deprecated. Use `ActorSystem::new_distributed()` instead.
 
 use crate::epmd::{EpmdClient, NodeInfo};
 use crate::serialization::{SerializableEnvelope, SerializableMessage, get_global_registry};
@@ -354,7 +360,7 @@ impl NodeRegistry {
     #[allow(dead_code)] // Used in future connection cleanup
     fn remove(&self, node_name: &str) {
         // Calculate node_id for removal
-        let node_id = DistributedSystem::hash_node_name(node_name);
+        let node_id = ActorSystem::hash_node_name(node_name);
 
         // Remove from all maps
         self.connections_by_name.remove(node_name);
@@ -367,6 +373,43 @@ impl NodeRegistry {
 }
 
 /// A distributed actor system with EPMD integration
+///
+/// # Deprecated
+///
+/// This struct is deprecated. Use `ActorSystem::new_distributed()` instead,
+/// which provides the same functionality with a unified API.
+///
+/// ## Migration Example
+///
+/// Old code:
+/// ```no_run
+/// # use joerl::distributed::DistributedSystem;
+/// # async fn example() {
+/// let system = DistributedSystem::new(
+///     "my_node",
+///     "127.0.0.1:5000",
+///     "127.0.0.1:4369"
+/// ).await.unwrap();
+/// let actor = system.system().spawn(MyActor);
+/// # }
+/// ```
+///
+/// New code:
+/// ```no_run
+/// # use joerl::ActorSystem;
+/// # async fn example() {
+/// let system = ActorSystem::new_distributed(
+///     "my_node",
+///     "127.0.0.1:5000",
+///     "127.0.0.1:4369"
+/// ).await.unwrap();
+/// let actor = system.spawn(MyActor);
+/// # }
+/// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "Use ActorSystem::new_distributed() instead for a unified API"
+)]
 pub struct DistributedSystem {
     /// The underlying actor system
     system: Arc<ActorSystem>,
@@ -387,28 +430,23 @@ pub struct DistributedSystem {
     _listener_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
+#[allow(deprecated)]
 impl DistributedSystem {
     /// Creates a new distributed actor system
+    ///
+    /// # Deprecated
+    ///
+    /// Use `ActorSystem::new_distributed()` instead.
     ///
     /// # Arguments
     ///
     /// * `node_name` - Unique name for this node
     /// * `listen_address` - Address to listen for incoming connections (e.g., "127.0.0.1:5000")
     /// * `epmd_address` - Address of EPMD server (e.g., "127.0.0.1:4369")
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use joerl::distributed::DistributedSystem;
-    ///
-    /// # async fn example() {
-    /// let system = DistributedSystem::new(
-    ///     "my_node",
-    ///     "127.0.0.1:5000",
-    ///     "127.0.0.1:4369"
-    /// ).await.expect("Failed to create system");
-    /// # }
-    /// ```
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use ActorSystem::new_distributed() instead"
+    )]
     pub async fn new(
         node_name: impl Into<String>,
         listen_address: impl Into<String>,
@@ -473,21 +511,28 @@ impl DistributedSystem {
     }
 
     /// Returns the underlying ActorSystem
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use ActorSystem::new_distributed() directly instead"
+    )]
     pub fn system(&self) -> &Arc<ActorSystem> {
         &self.system
     }
 
     /// Returns this node's name
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub fn node_name(&self) -> &str {
         &self.node_name
     }
 
     /// Returns this node's ID
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub fn node_id(&self) -> u32 {
         self.node_id
     }
 
     /// Creates a Pid for an actor on this node
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub fn make_pid(&self, local_id: u64) -> Pid {
         Pid {
             node: self.node_id,
@@ -496,6 +541,7 @@ impl DistributedSystem {
     }
 
     /// Sends a message to a Pid (local or remote)
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub async fn send(&self, from: Pid, to: Pid, msg: Message) -> Result<()> {
         if to.node == 0 || to.node == self.node_id {
             // Local message
@@ -526,6 +572,7 @@ impl DistributedSystem {
     }
 
     /// Discovers and connects to a remote node by name
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub async fn connect_to_node(&self, node_name: &str) -> Result<()> {
         // Lookup node in EPMD
         let node_info = self
@@ -548,11 +595,13 @@ impl DistributedSystem {
     }
 
     /// Lists all nodes registered with EPMD
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub async fn list_nodes(&self) -> Result<Vec<NodeInfo>> {
         Ok(self.epmd_client.list_nodes().await?)
     }
 
     /// Gracefully shuts down this node
+    #[deprecated(since = "0.5.0", note = "Use ActorSystem::new_distributed() instead")]
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down node {}", self.node_name);
         self.epmd_client.unregister(&self.node_name).await?;
@@ -962,6 +1011,7 @@ async fn handle_system_rpc(rpc: SystemRpc, system: &Arc<ActorSystem>) {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::serialization::{SerializableMessage, SerializationError, register_message_type};

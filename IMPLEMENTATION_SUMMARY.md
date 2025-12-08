@@ -10,9 +10,7 @@ joerl now supports distributed actor systems inspired by Erlang/OTP, enabling ac
 ┌────────────────────────────────────────┐
 │  Application Layer (Your Actors)      │
 ├────────────────────────────────────────┤
-│  DistributedSystem (Location Trans.)  │
-├────────────────────────────────────────┤
-│  ActorSystem (Local Runtime)          │
+│  ActorSystem (Unified Local/Remote)  │
 ├────────────────────────────────────────┤
 │  EPMD Client/Server (Discovery)       │
 ├────────────────────────────────────────┤
@@ -51,7 +49,8 @@ joerl now supports distributed actor systems inspired by Erlang/OTP, enabling ac
 **File:** `src/distributed.rs`
 
 **Features:**
-- ✅ `DistributedSystem` - Node-aware actor system
+- ✅ `ActorSystem::new_distributed()` - Unified distributed actor system
+- ⚠️ `DistributedSystem` - Deprecated wrapper (use `ActorSystem::new_distributed()` instead)
 - ✅ EPMD integration for discovery
 - ✅ Node ID assignment (hash of name)
 - ✅ TCP listener for incoming connections
@@ -77,17 +76,17 @@ pub struct NetworkMessage {
 }
 ```
 
-**API:**
+**API (Current - v0.5+):**
 ```rust
-// Create distributed system
-let system = DistributedSystem::new(
+// Create distributed system - unified API!
+let system = ActorSystem::new_distributed(
     "my_node",
     "127.0.0.1:5000", 
     "127.0.0.1:4369"
 ).await?;
 
-// Spawn actors (same API as ActorSystem)
-let actor = system.system().spawn(MyActor);
+// Spawn actors - same API as local!
+let actor = system.spawn(MyActor);
 
 // Connect to remote node
 system.connect_to_node("other_node").await?;
@@ -128,7 +127,8 @@ println!("{}", remote); // <42.100.0>
 **Files:**
 - `examples/epmd_server.rs` - Standalone EPMD server
 - `examples/distributed_cluster.rs` - Multi-node cluster demo
-- `examples/distributed_system_example.rs` - DistributedSystem API demo
+- `examples/distributed_system_example.rs` - Legacy DistributedSystem example (deprecated, see remote_ping_pong.rs)
+- `examples/remote_ping_pong.rs` - Current unified ActorSystem distributed example
 
 **Running:**
 ```bash
@@ -325,15 +325,9 @@ The current implementation provides the **transport infrastructure** while leavi
 
 ## Migration Guide
 
-### From ActorSystem to DistributedSystem
+### From DistributedSystem (Deprecated) to Unified ActorSystem
 
-**Before:**
-```rust
-let system = ActorSystem::new();
-let actor = system.spawn(MyActor);
-```
-
-**After:**
+**Before (v0.4 and earlier - DEPRECATED):**
 ```rust
 let dist_system = DistributedSystem::new(
     "my_node",
@@ -344,10 +338,22 @@ let dist_system = DistributedSystem::new(
 let actor = dist_system.system().spawn(MyActor);
 ```
 
-**API Compatibility:**
-- `DistributedSystem::system()` returns `&Arc<ActorSystem>`
-- All existing `ActorSystem` methods still work
-- No breaking changes to actor implementation
+**After (v0.5+ - CURRENT):**
+```rust
+let system = ActorSystem::new_distributed(
+    "my_node",
+    "127.0.0.1:5000",
+    "127.0.0.1:4369"
+).await?;
+
+let actor = system.spawn(MyActor);
+```
+
+**Benefits of Unified API:**
+- No need to call `.system()` - direct access to all methods
+- Same API for local and distributed systems
+- Simpler mental model - one system type
+- Better Erlang/OTP alignment
 
 ## Dependencies Added
 

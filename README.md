@@ -332,7 +332,7 @@ See the [`examples/`](examples/) directory for more examples:
 - `remote_ping_pong.rs` - Remote messaging between nodes
 - `distributed_chat.rs` - Multi-node chat system over TCP
 - `distributed_cluster.rs` - Multi-node cluster with EPMD discovery
-- `distributed_system_example.rs` - DistributedSystem API demo
+- `distributed_system_example.rs` - Distributed system example (uses deprecated API, see remote_ping_pong.rs for current API)
 - `epmd_server.rs` - Standalone EPMD server
 
 Run examples with:

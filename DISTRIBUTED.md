@@ -414,9 +414,7 @@ The distributed system follows a layered architecture:
 ┌────────────────────────────────────────┐
 │  Application Layer (Your Actors)      │
 ├────────────────────────────────────────┤
-│  DistributedSystem (Location Trans.)  │
-├────────────────────────────────────────┤
-│  ActorSystem (Local Runtime)          │
+│  ActorSystem (Unified Local/Remote)  │
 ├────────────────────────────────────────┤
 │  EPMD Client/Server (Discovery)       │
 ├────────────────────────────────────────┤
@@ -426,7 +424,7 @@ The distributed system follows a layered architecture:
 
 ### Node Discovery Flow
 
-1. Node starts → Create `DistributedSystem`
+1. Node starts → Create `ActorSystem::new_distributed()`
 2. Extract host/port from listen address
 3. Connect to EPMD server
 4. Register node with EPMD (name, host, port, metadata)
@@ -529,7 +527,7 @@ register_message_type("app::MyMessage", Box::new(deserialize_my_message));
 
 - **EPMD Server**: Complete standalone server with node registry
 - **EPMD Client**: Registration, lookup, keep-alive
-- **DistributedSystem**: Node-aware actor system wrapper
+- **ActorSystem::new_distributed()**: Unified API for distributed actors (replaces deprecated DistributedSystem)
 - **Node Discovery**: Automatic peer discovery via EPMD
 - **Connection Management**: TCP transport with auto-reconnect
 - **Pid Serialization**: Pids with node support
