@@ -43,6 +43,9 @@ jobs:
       - name: Run doc tests
         run: cargo test --all-features --doc --verbose
 
+      - name: Run prop tests
+        run: QUICKCHECK_TESTS=100 cargo test prop_ --all-features
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
