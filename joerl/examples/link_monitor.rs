@@ -203,7 +203,7 @@ async fn main() {
     sleep(Duration::from_millis(200)).await;
 
     println!("\nChecking if Observer is still alive...");
-    if system.is_alive(observer.pid()) {
+    if system.is_actor_alive(observer.pid()) {
         println!("✓ Observer is still alive!");
     }
 
@@ -268,8 +268,8 @@ async fn main() {
     sleep(Duration::from_millis(100)).await;
 
     println!("Before crash:");
-    println!("  Worker4 alive: {}", system.is_alive(worker4.pid()));
-    println!("  Worker5 alive: {}", system.is_alive(worker5.pid()));
+    println!("  Worker4 alive: {}", system.is_actor_alive(worker4.pid()));
+    println!("  Worker5 alive: {}", system.is_actor_alive(worker5.pid()));
 
     println!("\nCrashing Worker4...\n");
     worker4.send(Box::new("crash")).await.unwrap();
@@ -277,8 +277,8 @@ async fn main() {
     sleep(Duration::from_millis(300)).await;
 
     println!("After crash:");
-    println!("  Worker4 alive: {}", system.is_alive(worker4.pid()));
-    println!("  Worker5 alive: {}", system.is_alive(worker5.pid()));
+    println!("  Worker4 alive: {}", system.is_actor_alive(worker4.pid()));
+    println!("  Worker5 alive: {}", system.is_actor_alive(worker5.pid()));
     println!("✓ Both workers died due to link!");
 
     sleep(Duration::from_millis(100)).await;

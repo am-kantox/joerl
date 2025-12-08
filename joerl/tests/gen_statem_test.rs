@@ -88,7 +88,7 @@ async fn test_gen_statem_basic_transitions() {
     sleep(Duration::from_millis(10)).await;
 
     // Actor should still be alive after cycling
-    assert!(system.is_alive(light.pid()));
+    assert!(system.is_actor_alive(light.pid()));
 }
 
 #[tokio::test]
@@ -104,7 +104,7 @@ async fn test_gen_statem_terminal_transition() {
     sleep(Duration::from_millis(50)).await;
 
     // Actor should be terminated
-    assert!(!system.is_alive(light.pid()));
+    assert!(!system.is_actor_alive(light.pid()));
 }
 
 #[tokio::test]
@@ -123,7 +123,7 @@ async fn test_gen_statem_state_data_preservation() {
 
     // The cycles should have been tracked (we can't directly verify,
     // but the actor should still be functioning)
-    assert!(system.is_alive(light.pid()));
+    assert!(system.is_actor_alive(light.pid()));
 }
 
 /// FSM with Keep transitions for testing
@@ -189,7 +189,7 @@ async fn test_gen_statem_keep_transition() {
     }
 
     // Should still be active
-    assert!(system.is_alive(pinger.pid()));
+    assert!(system.is_actor_alive(pinger.pid()));
 
     // Deactivate
     pinger
@@ -198,7 +198,7 @@ async fn test_gen_statem_keep_transition() {
         .unwrap();
     sleep(Duration::from_millis(10)).await;
 
-    assert!(system.is_alive(pinger.pid()));
+    assert!(system.is_actor_alive(pinger.pid()));
 }
 
 #[tokio::test]
@@ -211,5 +211,5 @@ async fn test_gen_statem_invalid_transition_ignored() {
     sleep(Duration::from_millis(10)).await;
 
     // Actor should still be alive despite invalid transition
-    assert!(system.is_alive(pinger.pid()));
+    assert!(system.is_actor_alive(pinger.pid()));
 }

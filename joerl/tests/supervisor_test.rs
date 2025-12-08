@@ -137,7 +137,7 @@ async fn test_supervisor_starts_children() {
     assert_eq!(worker_a_stopped.load(Ordering::SeqCst), 0);
     assert_eq!(worker_b_stopped.load(Ordering::SeqCst), 0);
 
-    assert!(system.is_alive(supervisor.pid()));
+    assert!(system.is_actor_alive(supervisor.pid()));
 }
 
 #[tokio::test]
@@ -365,7 +365,7 @@ async fn test_supervisor_restart_intensity() {
     // Either the worker restarted (showing restart logic works)
     // OR the supervisor stopped (showing intensity limit works)
     // Both are correct behaviors
-    let supervisor_alive = system.is_alive(supervisor.pid());
+    let supervisor_alive = system.is_actor_alive(supervisor.pid());
 
     // If supervisor is still alive, worker should have been restarted
     // If supervisor stopped, that means intensity limit was exceeded
@@ -439,7 +439,7 @@ async fn test_supervisor_traps_exits() {
     sleep(Duration::from_millis(100)).await;
 
     // Supervisor should be alive and trapping exits
-    assert!(system.is_alive(supervisor.pid()));
+    assert!(system.is_actor_alive(supervisor.pid()));
 
     // Worker should have started
     assert_eq!(worker_started.load(Ordering::SeqCst), 1);
@@ -544,7 +544,7 @@ async fn test_supervisor_multiple_children() {
     assert_eq!(count4.load(Ordering::SeqCst), 1);
     assert_eq!(count5.load(Ordering::SeqCst), 1);
 
-    assert!(system.is_alive(supervisor.pid()));
+    assert!(system.is_actor_alive(supervisor.pid()));
 }
 
 #[tokio::test]
@@ -585,7 +585,7 @@ async fn test_empty_supervisor() {
     sleep(Duration::from_millis(50)).await;
 
     // Supervisor with no children should still start
-    assert!(system.is_alive(supervisor.pid()));
+    assert!(system.is_actor_alive(supervisor.pid()));
 }
 
 #[tokio::test]

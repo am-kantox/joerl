@@ -155,7 +155,7 @@ mod tests {
         actor.send(Box::new(42i32)).await.unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        assert!(system.is_alive(actor.pid()));
+        assert!(system.is_actor_alive(actor.pid()));
     }
 
     #[tokio::test]

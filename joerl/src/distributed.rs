@@ -175,21 +175,40 @@ impl NodeConnection {
 /// - Pool health monitoring and cleanup
 ///
 ///   This would improve throughput for high-traffic scenarios.
-struct NodeRegistry {
+pub struct NodeRegistry {
     connections_by_name: Arc<DashMap<String, Arc<NodeConnection>>>,
     connections_by_id: Arc<DashMap<u32, Arc<NodeConnection>>>,
     node_id_to_name: Arc<DashMap<u32, String>>,
     connection_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
 }
 
-impl NodeRegistry {
-    fn new() -> Self {
+impl Default for NodeRegistry {
+    fn default() -> Self {
         Self {
             connections_by_name: Arc::new(DashMap::new()),
             connections_by_id: Arc::new(DashMap::new()),
             node_id_to_name: Arc::new(DashMap::new()),
             connection_locks: Arc::new(DashMap::new()),
         }
+    }
+}
+
+impl NodeRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns a list of all connected node names.
+    pub fn list_connected_nodes(&self) -> Vec<String> {
+        self.connections_by_name
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Resolves a node ID to its name.
+    pub fn get_node_name(&self, node_id: u32) -> Option<String> {
+        self.node_id_to_name.get(&node_id).map(|name| name.clone())
     }
 
     /// Gets or creates a connection to a remote node
@@ -322,8 +341,9 @@ impl DistributedSystem {
         // Calculate node ID from name
         let node_id = Self::hash_node_name(&node_name);
 
-        // Create underlying actor system with node ID
-        let system = ActorSystem::with_node_id(node_id);
+        // NOTE: DistributedSystem is deprecated - use ActorSystem::new_distributed() instead
+        // This creates a local system temporarily for backward compatibility
+        let system = ActorSystem::new();
 
         // Create EPMD client
         let epmd_client = EpmdClient::new(epmd_address);
@@ -587,6 +607,152 @@ fn deserialize_message(data: &[u8]) -> Result<Message> {
 
     // Convert to Message
     Ok(Box::new(serializable))
+}
+
+// ============================================================================
+// Public API for ActorSystem integration
+// ============================================================================
+
+/// Sends a message to a remote actor via the node registry.
+///
+/// This is called by ActorSystem when sending to a remote Pid.
+pub async fn send_remote(
+    node_registry: &Arc<NodeRegistry>,
+    from: Pid,
+    to: Pid,
+    msg: Message,
+) -> Result<()> {
+    // Serialize the message
+    let payload = serialize_message(&msg)?;
+
+    // Create NetworkMessage
+    let net_msg = NetworkMessage { to, from, payload };
+
+    // Lookup node by node_id
+    let conn = node_registry.get_by_node_id(to.node).await?;
+
+    // Send via TCP connection
+    conn.send_message(&net_msg).await?;
+
+    debug!("Sent remote message from {} to {}", from, to);
+    Ok(())
+}
+
+/// Connects to a remote node and returns the connection.
+///
+/// This is called by ActorSystem::connect_to_node().
+pub async fn connect_to_node(
+    epmd_client: &EpmdClient,
+    node_registry: &Arc<NodeRegistry>,
+    remote_node_name: &str,
+    _local_node_name: &str,
+    _local_node_id: u32,
+    _local_listen_address: &str,
+) -> Result<()> {
+    // Lookup remote node in EPMD
+    let node_info = epmd_client
+        .lookup(remote_node_name)
+        .await?
+        .ok_or_else(|| DistributedError::NodeNotFound(remote_node_name.to_string()))?;
+
+    // Establish connection (will send handshake later when we implement it)
+    node_registry.get_or_connect(node_info).await?;
+
+    info!("Connected to remote node {}", remote_node_name);
+    Ok(())
+}
+
+/// Pings a remote process to check if it's alive.
+///
+/// Returns true if the process responds within the timeout.
+pub async fn ping_process(_node_registry: &Arc<NodeRegistry>, _pid: Pid) -> Result<bool> {
+    // TODO: Implement ping/pong RPC protocol
+    // For now, return false (not implemented)
+    warn!("ping_process not yet implemented - returning false");
+    Ok(false)
+}
+
+/// Accepts incoming connections from remote nodes.
+///
+/// This runs in a background task and handles incoming TCP connections.
+pub async fn accept_connections(
+    listener: TcpListener,
+    system: Arc<ActorSystem>,
+    _node_name: String,
+    _node_id: u32,
+    _listen_address: String,
+) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                debug!("Accepted connection from {}", addr);
+                let system_clone = Arc::clone(&system);
+                tokio::spawn(async move {
+                    if let Err(e) = handle_node_connection(stream, system_clone).await {
+                        error!("Connection handler error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                error!("Accept error: {}", e);
+            }
+        }
+    }
+}
+
+/// Handles messages from a connected remote node.
+async fn handle_node_connection(mut stream: TcpStream, system: Arc<ActorSystem>) -> Result<()> {
+    loop {
+        // Read message length
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                debug!("Remote node disconnected");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        }
+
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > 10 * 1024 * 1024 {
+            // 10MB max
+            return Err(DistributedError::SerializationError(
+                "Message too large".to_string(),
+            ));
+        }
+
+        // Read message
+        let mut msg_buf = vec![0u8; len];
+        stream.read_exact(&mut msg_buf).await?;
+
+        // Deserialize NetworkMessage
+        let net_msg: NetworkMessage = bincode::deserialize(&msg_buf)
+            .map_err(|e| DistributedError::SerializationError(e.to_string()))?;
+
+        debug!(
+            "Received remote message from {} to {}",
+            net_msg.from, net_msg.to
+        );
+
+        // Deserialize payload
+        match deserialize_message(&net_msg.payload) {
+            Ok(msg) => {
+                // Route to target actor
+                if let Err(e) = system.send(net_msg.to, msg).await {
+                    warn!("Failed to deliver remote message to {}: {}", net_msg.to, e);
+                    // TODO: Send error response to sender
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to deserialize message payload from {}: {}",
+                    net_msg.from, e
+                );
+                // TODO: Send error response to sender
+            }
+        }
+    }
 }
 
 #[cfg(test)]

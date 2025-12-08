@@ -67,7 +67,7 @@ async fn test_actor_exit_normal() {
     actor.send(Box::new("exit_normal")).await.unwrap();
     sleep(Duration::from_millis(50)).await;
 
-    assert!(!system.is_alive(pid));
+    assert!(!system.is_actor_alive(pid));
 }
 
 #[tokio::test]
@@ -242,7 +242,7 @@ async fn test_multiple_actors_concurrently() {
 
     // Verify all actors are alive
     for actor in &actors {
-        assert!(system.is_alive(actor.pid()));
+        assert!(system.is_actor_alive(actor.pid()));
     }
 
     // Send a message to each actor
@@ -254,7 +254,7 @@ async fn test_multiple_actors_concurrently() {
 
     // All actors should still be alive
     for actor in &actors {
-        assert!(system.is_alive(actor.pid()));
+        assert!(system.is_actor_alive(actor.pid()));
     }
 }
 
@@ -316,7 +316,7 @@ async fn test_actor_panic_notifies_links() {
     assert_eq!(exit_counter.load(Ordering::SeqCst), 1);
 
     // Panicked actor should be cleaned up
-    assert!(!system.is_alive(panic_pid));
+    assert!(!system.is_actor_alive(panic_pid));
 }
 
 #[tokio::test]
@@ -373,7 +373,7 @@ async fn test_actor_panic_notifies_monitors() {
     assert_eq!(down_counter.load(Ordering::SeqCst), 1);
 
     // Panicked actor should be cleaned up
-    assert!(!system.is_alive(panic_pid));
+    assert!(!system.is_actor_alive(panic_pid));
 }
 
 #[tokio::test]
@@ -468,7 +468,7 @@ async fn test_panic_in_started_hook() {
 
     // Monitor should receive DOWN even though panic happened in started
     assert_eq!(down_counter.load(Ordering::SeqCst), 1);
-    assert!(!system.is_alive(panic_pid));
+    assert!(!system.is_actor_alive(panic_pid));
 }
 
 #[tokio::test]
