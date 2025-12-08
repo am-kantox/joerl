@@ -1,11 +1,14 @@
 //! Remote Ping-Pong Example
 //!
 //! Demonstrates remote messaging between two distributed nodes using location transparency.
-//! This example shows how to:
-//! - Register custom message types for serialization
-//! - Create distributed actor systems
-//! - Send messages between actors on different nodes
-//! - Handle replies across node boundaries
+//! This example shows the unified ActorSystem API where local and remote messaging use
+//! identical code - the system handles routing automatically.
+//!
+//! Features demonstrated:
+//! - Unified ActorSystem for distributed actors (no separate DistributedSystem)
+//! - Transparent message routing (ctx.send works for both local and remote)
+//! - Custom serializable messages
+//! - Erlang-style node discovery (nodes(), node(), is_process_alive())
 //!
 //! # Running
 //!
@@ -22,12 +25,10 @@
 //! ```
 
 use async_trait::async_trait;
-use joerl::distributed::DistributedSystem;
 use joerl::serialization::{SerializableMessage, SerializationError, register_message_type};
-use joerl::{Actor, ActorContext, Message, Pid};
+use joerl::{Actor, ActorContext, ActorSystem, Message, Pid};
 use std::any::Any;
 use std::env;
-use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 
 // ============================================================================
@@ -109,9 +110,8 @@ fn deserialize_pong(data: &[u8]) -> Result<Box<dyn SerializableMessage>, Seriali
 // ============================================================================
 
 /// Server actor that responds to pings with pongs
-struct ServerActor {
-    dist_system: Arc<DistributedSystem>,
-}
+/// No need to store system reference - ctx.send handles everything!
+struct ServerActor;
 
 #[async_trait]
 impl Actor for ServerActor {
@@ -126,17 +126,13 @@ impl Actor for ServerActor {
         {
             println!("🏓 Received PING #{} from {}", ping.sequence, ping.sender);
 
-            // Send pong back to sender
+            // Send pong back - ctx.send handles both local and remote transparently!
             let pong = PongMessage {
                 sequence: ping.sequence,
             };
             let pong_msg: Message = Box::new(Box::new(pong) as Box<dyn SerializableMessage>);
 
-            match self
-                .dist_system
-                .send(ctx.pid(), ping.sender, pong_msg)
-                .await
-            {
+            match ctx.send(ping.sender, pong_msg).await {
                 Ok(_) => println!("   ↪️  Sent PONG #{} back", ping.sequence),
                 Err(e) => eprintln!("   ❌ Failed to send pong: {}", e),
             }
@@ -149,9 +145,9 @@ impl Actor for ServerActor {
 // ============================================================================
 
 /// Client actor that sends pings and tracks pongs
+/// Again, no system reference needed - context handles routing!
 struct ClientActor {
     server_pid: Pid,
-    dist_system: Arc<DistributedSystem>,
     sent_count: u32,
     received_count: u32,
     max_pings: u32,
@@ -203,11 +199,8 @@ impl ClientActor {
         let ping_msg: Message = Box::new(Box::new(ping) as Box<dyn SerializableMessage>);
 
         println!("🏓 Sending PING #{}...", self.sent_count);
-        match self
-            .dist_system
-            .send(ctx.pid(), self.server_pid, ping_msg)
-            .await
-        {
+        // Location transparent send - works for both local and remote!
+        match ctx.send(self.server_pid, ping_msg).await {
             Ok(_) => {}
             Err(e) => eprintln!("❌ Failed to send ping: {}", e),
         }
@@ -247,21 +240,18 @@ async fn main() {
 async fn run_server() {
     println!("\n🚀 Starting SERVER node...\n");
 
-    // Create distributed system for server
-    let node = DistributedSystem::new("server_node", "127.0.0.1:16000", "127.0.0.1:4369")
+    // Create distributed actor system - unified API!
+    let system = ActorSystem::new_distributed("server_node", "127.0.0.1:16000", "127.0.0.1:4369")
         .await
         .expect("Failed to create server node");
 
     println!("✅ Server node created:");
-    println!("   Node name: server_node");
-    println!("   Node ID: {}", node.node_id());
+    println!("   Node name: {}", system.node().unwrap());
+    println!("   Is distributed: {}", system.is_distributed());
     println!("   Listening on: 127.0.0.1:16000\n");
 
-    // Spawn server actor
-    let server_actor = ServerActor {
-        dist_system: Arc::clone(&node),
-    };
-    let server_ref = node.system().spawn(server_actor);
+    // Spawn server actor - same spawn API as local!
+    let server_ref = system.spawn(ServerActor);
 
     println!("📍 Server actor Pid: {}\n", server_ref.pid());
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -275,40 +265,54 @@ async fn run_server() {
         .expect("Failed to listen for ctrl-c");
 
     println!("\n\n🛑 Shutting down server...");
-    node.shutdown().await.ok();
+    system.shutdown().await.ok();
 }
 
 async fn run_client() {
     println!("\n🚀 Starting CLIENT node...\n");
 
-    // Create distributed system for client
-    let node = DistributedSystem::new("client_node", "127.0.0.1:16001", "127.0.0.1:4369")
+    // Create distributed actor system
+    let system = ActorSystem::new_distributed("client_node", "127.0.0.1:16001", "127.0.0.1:4369")
         .await
         .expect("Failed to create client node");
 
     println!("✅ Client node created:");
-    println!("   Node name: client_node");
-    println!("   Node ID: {}", node.node_id());
+    println!("   Node name: {}", system.node().unwrap());
+    println!("   Is distributed: {}", system.is_distributed());
     println!("   Listening on: 127.0.0.1:16001\n");
 
     // Wait for nodes to register
     println!("⏳ Waiting for EPMD registration...");
     sleep(Duration::from_millis(200)).await;
 
-    // Connect to server node
+    // Connect to server node using Erlang-style API
     println!("🔌 Connecting to server_node...");
-    node.connect_to_node("server_node")
+    system
+        .connect_to_node("server_node")
         .await
         .expect("Failed to connect to server");
-    println!("✅ Connected to server_node\n");
+    println!("✅ Connected to server_node");
+    println!("   Connected nodes: {:?}\n", system.nodes());
 
     // Look up server actor Pid
     // In a real application, you'd use a registry or discovery mechanism
-    // For this example, we'll construct the Pid directly
-    let server_node_id = DistributedSystem::hash_node_name("server_node");
+    // For this example, we'll construct the Pid directly using hash
+    let server_node_id = ActorSystem::hash_node_name("server_node");
     let server_pid = Pid::with_node(server_node_id, 1); // Assuming first actor spawned
 
-    println!("📍 Target server Pid: {}\n", server_pid);
+    println!("📍 Target server Pid: {}", server_pid);
+    println!(
+        "   Node of Pid: {}",
+        system.node_of(server_pid).unwrap_or("unknown".to_string())
+    );
+
+    // Check if remote process is alive using Erlang-style is_process_alive
+    if system.is_process_alive(server_pid).await {
+        println!("   ✅ Server process is alive!\n");
+    } else {
+        println!("   ❌ Server process not found!\n");
+    }
+
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Starting ping-pong exchange...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -316,16 +320,15 @@ async fn run_client() {
     // Spawn client actor
     let client_actor = ClientActor {
         server_pid,
-        dist_system: Arc::clone(&node),
         sent_count: 0,
         received_count: 0,
         max_pings: 5,
     };
-    node.system().spawn(client_actor);
+    system.spawn(client_actor);
 
     // Wait for ping-pong to complete
     sleep(Duration::from_secs(10)).await;
 
     println!("\n🛑 Shutting down client...");
-    node.shutdown().await.ok();
+    system.shutdown().await.ok();
 }

@@ -1,10 +1,10 @@
 //! Integration tests for remote messaging between distributed nodes.
+//! Tests the unified ActorSystem API with transparent location-based routing.
 
 use async_trait::async_trait;
-use joerl::distributed::DistributedSystem;
 use joerl::epmd::EpmdServer;
 use joerl::serialization::{SerializableMessage, SerializationError, register_message_type};
-use joerl::{Actor, ActorContext, Message};
+use joerl::{Actor, ActorContext, ActorSystem, Message};
 use std::any::Any;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -103,9 +103,9 @@ fn deserialize_send_ping(_data: &[u8]) -> Result<Box<dyn SerializableMessage>, S
 }
 
 /// Actor that responds to pings
+/// Now uses ctx.send for transparent local/remote routing!
 struct PongActor {
     received: Arc<Mutex<Vec<u32>>>,
-    dist_system: Arc<DistributedSystem>,
 }
 
 #[async_trait]
@@ -123,23 +123,20 @@ impl Actor for PongActor {
             // Record received ping
             self.received.lock().await.push(ping.count);
 
-            // Send pong back
+            // Send pong back using ctx.send - handles local/remote transparently!
             let pong = PongMsg { count: ping.count };
             let pong_msg: Message = Box::new(Box::new(pong) as Box<dyn SerializableMessage>);
 
-            let _ = self
-                .dist_system
-                .send(ctx.pid(), ping.reply_to, pong_msg)
-                .await;
+            let _ = ctx.send(ping.reply_to, pong_msg).await;
         }
     }
 }
 
 /// Actor that sends pings and waits for pongs
+/// Uses ctx.send for transparent routing!
 struct PingActor {
     target: joerl::Pid,
     received_pongs: Arc<Mutex<Vec<u32>>>,
-    dist_system: Arc<DistributedSystem>,
 }
 
 #[async_trait]
@@ -161,17 +158,14 @@ impl Actor for PingActor {
                 .downcast_ref::<SendPingCmd>()
                 .is_some()
             {
-                // Send ping to remote actor
+                // Send ping to remote actor using ctx.send!
                 let ping = PingMsg {
                     count: 1,
                     reply_to: ctx.pid(),
                 };
                 let ping_msg: Message = Box::new(Box::new(ping) as Box<dyn SerializableMessage>);
 
-                let _ = self
-                    .dist_system
-                    .send(ctx.pid(), self.target, ping_msg)
-                    .await;
+                let _ = ctx.send(self.target, ping_msg).await;
             }
         }
     }
@@ -197,30 +191,35 @@ async fn test_remote_ping_pong() {
     register_message_type("remote_test::PongMsg", Box::new(deserialize_pong));
     register_message_type("remote_test::SendPingCmd", Box::new(deserialize_send_ping));
 
-    // Create two distributed systems on different ports (using same EPMD)
-    let node_a = DistributedSystem::new("node_a", "127.0.0.1:15000", "127.0.0.1:14369")
+    // Create two distributed systems using unified ActorSystem API
+    let node_a = ActorSystem::new_distributed("node_a", "127.0.0.1:15000", "127.0.0.1:14369")
         .await
         .expect("Failed to create node_a");
 
-    let node_b = DistributedSystem::new("node_b", "127.0.0.1:15001", "127.0.0.1:14369")
+    let node_b = ActorSystem::new_distributed("node_b", "127.0.0.1:15001", "127.0.0.1:14369")
         .await
         .expect("Failed to create node_b");
 
     // Give nodes time to register with EPMD
     sleep(Duration::from_millis(500)).await;
 
-    // Connect nodes bidirectionally
+    // Connect node_a to node_b - bidirectional connection established automatically!
     node_a
         .connect_to_node("node_b")
         .await
         .expect("Failed to connect node_a to node_b");
 
-    node_b
-        .connect_to_node("node_a")
-        .await
-        .expect("Failed to connect node_b to node_a");
-
     sleep(Duration::from_millis(200)).await;
+
+    // Verify both nodes see each other
+    assert!(
+        node_a.nodes().contains(&"node_b".to_string()),
+        "node_a should see node_b"
+    );
+    assert!(
+        node_b.nodes().contains(&"node_a".to_string()),
+        "node_b should see node_a"
+    );
 
     // Create shared state for tracking messages
     let pong_received = Arc::new(Mutex::new(Vec::new()));
@@ -229,20 +228,19 @@ async fn test_remote_ping_pong() {
     // Spawn PongActor on node_b
     let pong_actor = PongActor {
         received: Arc::clone(&pong_received),
-        dist_system: Arc::clone(&node_b),
     };
-    let pong_ref = node_b.system().spawn(pong_actor);
+    let pong_ref = node_b.spawn(pong_actor);
 
     // Create remote Pid for pong actor (with node_b's node_id)
-    let pong_remote_pid = joerl::Pid::with_node(node_b.node_id(), pong_ref.pid().id());
+    let pong_node_id = ActorSystem::hash_node_name("node_b");
+    let pong_remote_pid = joerl::Pid::with_node(pong_node_id, pong_ref.pid().id());
 
     // Spawn PingActor on node_a
     let ping_actor = PingActor {
         target: pong_remote_pid,
         received_pongs: Arc::clone(&ping_received_pongs),
-        dist_system: Arc::clone(&node_a),
     };
-    let ping_ref = node_a.system().spawn(ping_actor);
+    let ping_ref = node_a.spawn(ping_actor);
 
     // Give actors time to start
     sleep(Duration::from_millis(200)).await;
@@ -290,8 +288,8 @@ async fn test_remote_actor_not_found() {
     // Register message types
     register_message_type("remote_test::PingMsg", Box::new(deserialize_ping));
 
-    // Create a distributed system (use same EPMD port as spawned above)
-    let node_a = DistributedSystem::new("node_test_a", "127.0.0.1:15100", "127.0.0.1:4370")
+    // Create a distributed system using unified ActorSystem API
+    let node_a = ActorSystem::new_distributed("node_test_a", "127.0.0.1:15100", "127.0.0.1:4370")
         .await
         .expect("Failed to create node");
 
@@ -305,7 +303,7 @@ async fn test_remote_actor_not_found() {
     };
     let msg: Message = Box::new(Box::new(ping) as Box<dyn SerializableMessage>);
 
-    let result = node_a.send(joerl::Pid::new(), fake_pid, msg).await;
+    let result = node_a.send(fake_pid, msg).await;
 
     // Should fail with node not found
     assert!(result.is_err());

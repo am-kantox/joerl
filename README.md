@@ -337,29 +337,57 @@ cargo run --example counter
 
 ### Distributed Actors Examples
 
-The `remote_actors` example demonstrates the conceptual foundation for distributed systems:
+joerl now features a **unified ActorSystem** with true location transparency! The same API works for both local and distributed scenarios - just like Erlang/OTP.
+
+**Quick Start with EPMD:**
+
+```bash
+# Terminal 1: Start EPMD server
+cargo run --example epmd_server
+
+# Terminal 2: Start first node
+cargo run --example distributed_system_example -- node_a 5001
+
+# Terminal 3: Start second node
+cargo run --example distributed_system_example -- node_b 5002
+
+# Nodes automatically discover and connect!
+```
+
+**Remote Ping-Pong Example:**
+
+```bash
+# Terminal 1: Start server node
+cargo run --example remote_ping_pong -- server
+
+# Terminal 2: Start client node
+cargo run --example remote_ping_pong -- client
+```
+
+This demonstrates:
+- **Unified ActorSystem**: `ActorSystem::new_distributed()` - same API as local!
+- **Location Transparency**: `ctx.send()` works for both local and remote actors
+- **Erlang-Style Helpers**: `nodes()`, `node()`, `is_process_alive()`, `connect_to_node()`
+- **Bidirectional Connections**: Handshake protocol establishes auto-bidirectional links
+- **Ping/Pong RPC**: Remote process liveness checking
+
+**Conceptual Examples:**
+
+The `remote_actors` example demonstrates distributed concepts using multiple local systems:
 
 ```bash
 cargo run --example remote_actors
 ```
 
-This shows how multiple actor systems (nodes) can communicate through serializable messages, simulating the distributed nature of Erlang/OTP.
-
-The `distributed_chat` example demonstrates a real distributed chat system using TCP:
+The `distributed_chat` example shows a real TCP-based distributed chat:
 
 ```bash
-# Terminal 1 - Start first node
+# Terminal 1
 cargo run --example distributed_chat -- --node alice --port 8001
 
-# Terminal 2 - Start second node and connect to first
+# Terminal 2
 cargo run --example distributed_chat -- --node bob --port 8002 --connect 127.0.0.1:8001
 ```
-
-This example shows:
-- TCP-based node-to-node communication
-- Message serialization with JSON
-- Connection management and routing
-- Location-transparent messaging patterns
 
 For detailed documentation on building distributed systems with joerl, see [DISTRIBUTED.md](DISTRIBUTED.md).
 

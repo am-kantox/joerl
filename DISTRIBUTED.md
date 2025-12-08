@@ -10,10 +10,11 @@ Erlang/OTP has built-in support for distributed computing where actors (processe
 
 - **EPMD Server**: Standalone port mapper daemon for node registry (port 4369)
 - **EPMD Client**: Library for node registration, discovery, and keep-alive
-- **DistributedSystem**: Node-aware actor system with EPMD integration
-- **Remote Messaging**: Full location-transparent message passing between nodes ✨ NEW
+- **Unified ActorSystem**: Same API for local and distributed systems - true location transparency! ✨
+- **Remote Messaging**: Full location-transparent message passing between nodes
 - **Message Serialization**: Global registry with trait-based serialization
-- **TCP Transport**: Node-to-node connection management with auto-reconnect
+- **TCP Transport**: Node-to-node connection management with bidirectional handshake
+- **Ping/Pong RPC**: Remote process liveness checking (erlang:is_process_alive/1)
 - **Production-Ready Examples**: Working multi-node cluster demonstrations
 
 See [CLUSTERING.md](./CLUSTERING.md) for complete documentation and [QUICKSTART_CLUSTERING.md](./QUICKSTART_CLUSTERING.md) for getting started.
@@ -35,8 +36,7 @@ joerl now supports full remote messaging between distributed nodes with location
 
 ```rust
 use joerl::serialization::{SerializableMessage, SerializationError, register_message_type};
-use joerl::distributed::DistributedSystem;
-use joerl::{Actor, ActorContext, Message};
+use joerl::{Actor, ActorContext, ActorSystem, Message, Pid};
 use async_trait::async_trait;
 use std::any::Any;
 
@@ -74,8 +74,8 @@ fn deserialize_ping(data: &[u8]) -> Result<Box<dyn SerializableMessage>, Seriali
 // 4. Register message type (do this once, typically in actor constructor)
 register_message_type("myapp::PingMsg", Box::new(deserialize_ping));
 
-// 5. Send messages!
-struct MyActor { dist_system: Arc<DistributedSystem> }
+// 5. Send messages - NO system reference needed!
+struct MyActor;
 
 #[async_trait]
 impl Actor for MyActor {
@@ -84,9 +84,9 @@ impl Actor for MyActor {
         let ping = PingMsg { count: 1, reply_to: ctx.pid() };
         let msg: Message = Box::new(Box::new(ping) as Box<dyn SerializableMessage>);
         
-        // Send to remote actor
+        // Send to remote actor - ctx.send works for BOTH local and remote!
         let remote_pid = Pid::with_node(remote_node_id, remote_actor_id);
-        self.dist_system.send(ctx.pid(), remote_pid, msg).await.ok();
+        ctx.send(remote_pid, msg).await.ok();
     }
 }
 ```
@@ -197,38 +197,48 @@ cargo run --example epmd_server
 cargo run --example epmd_server -- 0.0.0.0:4369
 ```
 
-### 2. `distributed_system_example.rs` - DistributedSystem API ✨ NEW
+### 2. `distributed_system_example.rs` - Unified ActorSystem API ✨ NEW
 
-Demonstrates the `DistributedSystem` API for building distributed actor systems.
+Demonstrates the unified `ActorSystem` API with true location transparency.
 
 **Key Features:**
 
 - **Automatic EPMD Registration**: Registers with EPMD on startup
 - **Node Discovery**: Automatically discovers peer nodes
 - **Connection Management**: Establishes and maintains connections to peers
-- **Location Transparency**: Same API as ActorSystem
+- **True Location Transparency**: IDENTICAL API for local and distributed!
+- **Erlang-Style Helpers**: nodes(), node(), is_process_alive(), connect_to_node()
 - **Graceful Shutdown**: Unregisters from EPMD on exit
 
 **Usage:**
 
 ```rust
-use joerl::distributed::DistributedSystem;
+use joerl::ActorSystem;
 
-// Create distributed system
-let system = DistributedSystem::new(
+// Create distributed system - same constructor pattern as local!
+let system = ActorSystem::new_distributed(
     "my_node",
     "127.0.0.1:5000",
     "127.0.0.1:4369"
 ).await?;
 
-// Spawn actors (same API as ActorSystem)
-let actor = system.system().spawn(MyActor);
+// Spawn actors - SAME API as local ActorSystem!
+let actor = system.spawn(MyActor);
 
-// Discover other nodes
+// Erlang-style helpers
+let connected_nodes = system.nodes();  // erlang:nodes()
+let my_node = system.node();  // erlang:node()
+
+// Discover other nodes via EPMD
 let nodes = system.list_nodes().await?;
 
-// Connect to remote node
+// Connect to remote node (establishes bidirectional connection)
 system.connect_to_node("other_node").await?;
+
+// Check if remote process is alive
+if system.is_process_alive(remote_pid).await {
+    println!("Remote actor is running!");
+}
 ```
 
 **Running:**
@@ -371,22 +381,27 @@ RemotePid = spawn('node@hostname', module, function, [Args]).
 link(RemotePid).
 ```
 
-### In joerl (Current Examples)
+### In joerl (Unified ActorSystem)
 
-Distribution requires explicit handling:
+Distribution is now transparent - SAME API as Erlang!
 
 ```rust
-// Get reference to remote node
-if let Some((system, proxy_pid)) = registry.get_node("node_b").await {
-    // Serialize message
-    let msg = RemoteMessage::Echo {
-        content: "Hello".to_string(),
-        reply_to: "node_a".to_string(),
-    };
-    
-    // Send to remote proxy
-    system.send(proxy_pid, Box::new(msg)).await?;
+// Send to remote actor - exactly like sending locally!
+ctx.send(remote_pid, msg).await?;
+
+// Check if remote process is alive
+if system.is_process_alive(remote_pid).await {
+    println!("Process is alive!");
 }
+
+// Get connected nodes
+let nodes = system.nodes();  // Vec<String>
+
+// Get current node name
+let my_node = system.node();  // Option<&str>
+
+// Get node name for a Pid
+let node_name = system.node_of(remote_pid);  // Option<String>
 ```
 
 ## EPMD Implementation Details
@@ -535,33 +550,42 @@ enum RemoteCommand {
 - **TLS Support**: Encrypted node-to-node communication
 - **Alternative Discovery**: DNS, multicast, Consul, etcd
 
-## Example: Using DistributedSystem
+## Example: Using Unified ActorSystem
 
 ```rust
-use joerl::distributed::DistributedSystem;
+use joerl::ActorSystem;
 use joerl::{Actor, ActorContext, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create distributed system
-    let system = DistributedSystem::new(
+    // Create distributed system - SAME pattern as local!
+    let system = ActorSystem::new_distributed(
         "my_node",              // Node name
         "127.0.0.1:5000",       // Listen address
         "127.0.0.1:4369"        // EPMD address
     ).await?;
     
-    // Spawn actors (same API as ActorSystem)
-    let actor = system.system().spawn(MyActor);
+    // Spawn actors - IDENTICAL API!
+    let actor = system.spawn(MyActor);
     
-    // Discover peers
+    // Erlang-style helpers
+    println!("I am: {}", system.node().unwrap());
+    println!("Connected to: {:?}", system.nodes());
+    
+    // Discover peers via EPMD
     let nodes = system.list_nodes().await?;
     println!("Cluster nodes: {:?}", nodes);
     
-    // Connect to specific node
+    // Connect to specific node (bidirectional!)
     system.connect_to_node("other_node").await?;
     
-    // Local messaging works as before
+    // Messaging works identically for local and remote
     actor.send(Box::new("hello")).await?;
+    
+    // Check if remote actor is alive
+    if system.is_process_alive(remote_pid).await {
+        println!("Remote actor is running!");
+    }
     
     // Graceful shutdown
     system.shutdown().await?;

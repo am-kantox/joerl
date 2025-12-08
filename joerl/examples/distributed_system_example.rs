@@ -1,6 +1,7 @@
 //! Distributed System Example
 //!
-//! Demonstrates the DistributedSystem API for location-transparent actor messaging.
+//! Demonstrates the unified ActorSystem API for location-transparent actor messaging.
+//! The same API works for both local and distributed messaging with no code changes.
 //!
 //! ## Running
 //!
@@ -25,9 +26,8 @@
 //! ```
 
 use async_trait::async_trait;
-use joerl::distributed::DistributedSystem;
 use joerl::epmd::DEFAULT_EPMD_PORT;
-use joerl::{Actor, ActorContext, Message};
+use joerl::{Actor, ActorContext, ActorSystem, Message};
 use std::time::Duration;
 use tokio::time;
 use tracing::{Level, error, info};
@@ -107,35 +107,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let epmd_address = format!("127.0.0.1:{}", DEFAULT_EPMD_PORT);
 
     info!("========================================");
-    info!("    DistributedSystem Example");
+    info!("    Unified ActorSystem Example");
     info!("========================================");
     info!("");
 
-    // Create distributed system
-    info!("[{}] Creating distributed system...", node_name);
-    let dist_system = DistributedSystem::new(&node_name, &listen_address, &epmd_address)
+    // Create distributed system using unified API
+    info!("[{}] Creating distributed actor system...", node_name);
+    let system = ActorSystem::new_distributed(&node_name, &listen_address, &epmd_address)
         .await
         .map_err(|e| format!("Failed to create distributed system: {}", e))?;
 
-    info!(
-        "[{}] Node ID: {} (hash of name)",
-        node_name,
-        dist_system.node_id()
-    );
+    info!("[{}] Node: {}", node_name, system.node().unwrap());
+    info!("[{}] Distributed: {}", node_name, system.is_distributed());
     info!("");
 
-    // Spawn local actors using the underlying system
+    // Spawn local actors - same API as non-distributed!
     info!("[{}] Spawning local actors...", node_name);
 
-    let echo1 = dist_system.system().spawn(EchoActor {
+    let echo1 = system.spawn(EchoActor {
         node_name: node_name.clone(),
     });
 
-    let echo2 = dist_system.system().spawn(EchoActor {
+    let echo2 = system.spawn(EchoActor {
         node_name: node_name.clone(),
     });
 
-    let coordinator = dist_system.system().spawn(CoordinatorActor {
+    let coordinator = system.spawn(CoordinatorActor {
         node_name: node_name.clone(),
     });
 
@@ -146,13 +143,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("");
 
     // Graceful shutdown handler
-    let dist_system_clone = dist_system.clone();
+    let system_clone = system.clone();
     let node_name_clone = node_name.clone();
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         info!("");
         info!("[{}] Received Ctrl+C, shutting down...", node_name_clone);
-        if let Err(e) = dist_system_clone.shutdown().await {
+        if let Err(e) = system_clone.shutdown().await {
             error!("[{}] Shutdown error: {}", node_name_clone, e);
         }
         std::process::exit(0);
@@ -168,8 +165,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         info!("[{}] --- Iteration {} ---", node_name, iteration);
 
-        // Discover peers
-        match dist_system.list_nodes().await {
+        // List connected nodes using Erlang-style API
+        let connected_nodes = system.nodes();
+        info!("[{}] Connected nodes: {:?}", node_name, connected_nodes);
+
+        // Discover peers via EPMD
+        match system.list_nodes().await {
             Ok(nodes) => {
                 let peers: Vec<_> = nodes
                     .iter()
@@ -187,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Try connecting to each peer
                     for peer_name in peers {
-                        match dist_system.connect_to_node(peer_name).await {
+                        match system.connect_to_node(peer_name).await {
                             Ok(_) => {
                                 info!("[{}] Connected to {}", node_name, peer_name);
                             }

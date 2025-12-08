@@ -589,21 +589,27 @@ impl ActorSystem {
         capacity: usize,
         actor_type: &str,
     ) -> ActorRef {
-        // Create Pid with the system's local_node_id (0 for local-only, node_id for distributed)
+        // Create base Pid with node=0 for local registration
         let local_pid = Pid::new();
-        let pid = if self.local_node_id == 0 {
+
+        // Create external Pid (with local_node_id for distributed systems)
+        let external_pid = if self.local_node_id == 0 {
             local_pid
         } else {
             Pid::with_node(self.local_node_id, local_pid.id())
         };
+
         let actor_type_owned = actor_type.to_string();
         let (mailbox, sender) = Mailbox::new_with_type(capacity, actor_type_owned.clone());
-        let mut ctx = ActorContext::new(pid, mailbox);
+
+        // Context uses external Pid (so ctx.pid() shows distributed node)
+        let mut ctx = ActorContext::new(external_pid, mailbox);
 
         // Set system reference in context
         ctx.set_system(Arc::downgrade(self));
 
-        // Register actor
+        // Register actor with LOCAL Pid (node=0) for internal lookups
+        // This allows normalization to work: local_node_id -> 0 for lookup
         let entry = ActorEntry {
             sender: sender.clone(),
             links: HashSet::new(),
@@ -612,7 +618,7 @@ impl ActorSystem {
             #[cfg(feature = "telemetry")]
             spawn_time: std::time::Instant::now(),
         };
-        self.actors.insert(pid, entry);
+        self.actors.insert(local_pid, entry);
 
         // Telemetry: record actor spawn with type
         ActorMetrics::actor_spawned_typed(&actor_type_owned);
@@ -698,7 +704,7 @@ impl ActorSystem {
 
                 tracing::error!(
                     "Actor {} ({}) panicked: {}",
-                    pid,
+                    external_pid,
                     actor_type_for_panic,
                     panic_msg
                 );
@@ -707,13 +713,14 @@ impl ActorSystem {
             });
 
             // Cleanup - always runs even if actor panicked
-            system.cleanup_actor(pid, &exit_reason).await;
+            // Use local_pid for cleanup (registered with node=0)
+            system.cleanup_actor(local_pid, &exit_reason).await;
 
             exit_reason
         });
 
         ActorRef {
-            pid,
+            pid: external_pid,
             system: Arc::clone(self),
             join_handle: Some(join_handle),
         }
@@ -1220,6 +1227,72 @@ impl ActorSystem {
                 "Cannot connect - system is not distributed".to_string(),
             ))
         }
+    }
+
+    /// Lists all nodes registered with EPMD.
+    ///
+    /// Returns an error if the system is not distributed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use joerl::ActorSystem;
+    ///
+    /// # async fn example() {
+    /// let system = ActorSystem::new_distributed(
+    ///     "node_a",
+    ///     "127.0.0.1:5000",
+    ///     "127.0.0.1:4369"
+    /// ).await.unwrap();
+    ///
+    /// let nodes = system.list_nodes().await.unwrap();
+    /// for node in nodes {
+    ///     println!("Node: {}", node.name);
+    /// }
+    /// # }
+    /// ```
+    pub async fn list_nodes(&self) -> Result<Vec<crate::epmd::NodeInfo>> {
+        if let Some(epmd) = &self.epmd_client {
+            epmd.list_nodes()
+                .await
+                .map_err(|e| ActorError::other(format!("EPMD error: {}", e)))
+        } else {
+            Err(ActorError::other(
+                "Cannot list nodes - system is not distributed".to_string(),
+            ))
+        }
+    }
+
+    /// Gracefully shuts down the actor system.
+    ///
+    /// For distributed systems, unregisters from EPMD.
+    /// For local systems, this is a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use joerl::ActorSystem;
+    ///
+    /// # async fn example() {
+    /// let system = ActorSystem::new_distributed(
+    ///     "node_a",
+    ///     "127.0.0.1:5000",
+    ///     "127.0.0.1:4369"
+    /// ).await.unwrap();
+    ///
+    /// // ... do work ...
+    ///
+    /// system.shutdown().await.ok();
+    /// # }
+    /// ```
+    pub async fn shutdown(&self) -> Result<()> {
+        if let (Some(epmd), Some(node_name)) = (&self.epmd_client, &self.node_name) {
+            info!("Shutting down node {}", node_name);
+            epmd.unregister(node_name)
+                .await
+                .map_err(|e| ActorError::other(format!("EPMD error: {}", e)))?;
+        }
+        Ok(())
     }
 
     /// Cleans up an actor after termination.
