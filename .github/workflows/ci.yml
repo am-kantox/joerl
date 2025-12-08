@@ -38,10 +38,10 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
       
       - name: Run tests
-        run: cargo test --all-features --verbose
+        run: cargo test --all-features
       
       - name: Run doc tests
-        run: cargo test --all-features --doc --verbose
+        run: cargo test --all-features --doc
 
       - name: Run prop tests
         run: QUICKCHECK_TESTS=100 cargo test prop_ --all-features

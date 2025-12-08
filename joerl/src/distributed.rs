@@ -417,7 +417,6 @@ impl NodeRegistry {
 ///     "127.0.0.1:5000",
 ///     "127.0.0.1:4369"
 /// ).await.unwrap();
-/// let actor = system.system().spawn(MyActor);
 /// # }
 /// ```
 ///
@@ -430,7 +429,6 @@ impl NodeRegistry {
 ///     "127.0.0.1:5000",
 ///     "127.0.0.1:4369"
 /// ).await.unwrap();
-/// let actor = system.spawn(MyActor);
 /// # }
 /// ```
 #[deprecated(
