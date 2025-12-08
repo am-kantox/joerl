@@ -743,6 +743,36 @@ impl ActorSystem {
         self.actors.contains_key(&pid)
     }
 
+    /// Returns the number of currently active actors in the system.
+    ///
+    /// This is useful for monitoring and health checks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// assert_eq!(system.actor_count(), 0);
+    ///
+    /// let _worker1 = system.spawn(Worker);
+    /// let _worker2 = system.spawn(Worker);
+    /// assert_eq!(system.actor_count(), 2);
+    /// # });
+    /// ```
+    pub fn actor_count(&self) -> usize {
+        self.actors.len()
+    }
+
     /// Cleans up an actor after termination.
     async fn cleanup_actor(&self, pid: Pid, reason: &ExitReason) {
         // Get actor type, spawn time, and remove from registry

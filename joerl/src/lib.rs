@@ -97,6 +97,7 @@ pub mod epmd;
 pub mod error;
 pub mod gen_server;
 pub mod gen_statem;
+pub mod health;
 pub mod mailbox;
 pub mod message;
 pub mod pid;
@@ -108,6 +109,7 @@ pub mod telemetry;
 // Re-export commonly used types
 pub use actor::{Actor, ActorContext};
 pub use error::{ActorError, Result};
+pub use health::{HealthConfig, HealthIssue, HealthStatus, IssueSeverity, SystemHealth};
 pub use message::{ExitReason, Message, MonitorRef, Signal};
 pub use pid::Pid;
 pub use supervisor::{RestartStrategy, Supervisor, SupervisorSpec};

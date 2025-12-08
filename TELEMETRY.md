@@ -549,6 +549,126 @@ Then visit `http://127.0.0.1:9090/metrics` to see live metrics.
 
 Labels are automatically applied based on the operation context. If you need custom labels, you'll need to create your own metrics using the `metrics` crate directly.
 
+## Health Checks
+
+joerl provides a built-in health checking system that monitors the overall health of your actor system based on telemetry metrics.
+
+### Basic Usage
+
+```rust
+use joerl::{ActorSystem, SystemHealth, HealthConfig};
+
+let system = ActorSystem::new();
+let health = SystemHealth::new(system.clone(), HealthConfig::default());
+
+// Simple health check
+if health.is_healthy() {
+    println!("System is healthy");
+} else {
+    println!("System has issues: {}", health.get_report());
+}
+```
+
+### Health Status Levels
+
+The system reports one of three health states:
+
+- **Healthy**: All metrics within acceptable thresholds
+- **Degraded**: Some issues detected (warnings) but system is operational
+- **Unhealthy**: Critical issues detected requiring immediate attention
+
+### Configurable Thresholds
+
+```rust
+use joerl::{SystemHealth, HealthConfig};
+
+let config = HealthConfig {
+    max_actors: 10000,          // Alert if actor count exceeds this
+    min_actors: 0,              // Alert if actor count below this
+    max_panic_rate: 0.01,       // Alert if >1% of actors panic
+    max_restart_rate: 0.05,     // Alert if >5% restart rate
+    max_backpressure_rate: 0.1, // Alert if >10% backpressure
+};
+
+let health = SystemHealth::new(system.clone(), config);
+```
+
+### Health Check Methods
+
+```rust
+// Simple boolean check
+let healthy: bool = health.is_healthy();
+
+// Readiness probe (for Kubernetes)
+let ready: bool = health.is_ready();
+
+// Get detailed status
+use joerl::HealthStatus;
+let status: HealthStatus = health.get_status();
+match status {
+    HealthStatus::Healthy => println!("✓ All systems operational"),
+    HealthStatus::Degraded => println!("⚠ Some issues detected"),
+    HealthStatus::Unhealthy => println!("✗ Critical issues"),
+}
+
+// Get structured issue list
+let issues = health.get_issues();
+for issue in issues {
+    println!("[{:?}] {}: {}", issue.severity, issue.title, issue.message);
+}
+
+// Get formatted report
+let report = health.get_report();
+println!("{}", report);
+```
+
+### Kubernetes Integration
+
+Use health checks for liveness and readiness probes:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: joerl-app
+spec:
+  containers:
+  - name: app
+    image: my-joerl-app:latest
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 30
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+```
+
+**Note**: HTTP endpoint implementation is left as a future enhancement. For now, you can implement health check endpoints in your application using the `is_healthy()` and `is_ready()` methods with frameworks like `axum` or `warp`.
+
+### Health Check Metrics
+
+The health checker evaluates:
+
+- **Actor Count**: Too many or too few actors
+- **Panic Rate**: `actors_panicked / actors_spawned`
+- **Restart Rate**: `supervisor_restarts / actors_stopped`
+- **Backpressure Rate**: `mailbox_full / messages_sent`
+
+### Example Health Report
+
+```
+Status: Degraded
+Issues:
+  [Warning] High actor count: 8523 active actors (threshold: 5000)
+  [Warning] High backpressure: 15.3% of messages encountering full mailboxes
+```
+
 ## Further Reading
 
 - [Prometheus Best Practices](https://prometheus.io/docs/practices/)
