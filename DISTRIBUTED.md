@@ -11,11 +11,120 @@ Erlang/OTP has built-in support for distributed computing where actors (processe
 - **EPMD Server**: Standalone port mapper daemon for node registry (port 4369)
 - **EPMD Client**: Library for node registration, discovery, and keep-alive
 - **DistributedSystem**: Node-aware actor system with EPMD integration
-- **Location Transparency Foundation**: Pids with node support, serialization ready
+- **Remote Messaging**: Full location-transparent message passing between nodes ✨ NEW
+- **Message Serialization**: Global registry with trait-based serialization
 - **TCP Transport**: Node-to-node connection management with auto-reconnect
 - **Production-Ready Examples**: Working multi-node cluster demonstrations
 
 See [CLUSTERING.md](./CLUSTERING.md) for complete documentation and [QUICKSTART_CLUSTERING.md](./QUICKSTART_CLUSTERING.md) for getting started.
+
+## Remote Messaging ✨ NEW
+
+joerl now supports full remote messaging between distributed nodes with location transparency!
+
+### Key Features
+
+- **Trait-Based Serialization**: Messages implement `SerializableMessage` trait
+- **Global Message Registry**: Register deserializers once, use everywhere
+- **Automatic Sender Tracking**: Sender Pid automatically included in remote messages
+- **Location Transparent**: Same `ctx.send()` API for local and remote messages
+- **Type-Safe**: Compile-time message type checking
+- **Lazy Registration**: Register message types in actor constructors
+
+### Quick Example
+
+```rust
+use joerl::serialization::{SerializableMessage, SerializationError, register_message_type};
+use joerl::distributed::DistributedSystem;
+use joerl::{Actor, ActorContext, Message};
+use async_trait::async_trait;
+use std::any::Any;
+
+// 1. Define your message
+struct PingMsg { count: u32, reply_to: Pid }
+
+// 2. Implement SerializableMessage
+impl SerializableMessage for PingMsg {
+    fn message_type_id(&self) -> &'static str {
+        "myapp::PingMsg"  // Must be unique!
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn serialize(&self) -> Result<Vec<u8>, SerializationError> {
+        // Your serialization logic
+        let mut bytes = self.count.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&self.reply_to.node().to_le_bytes());
+        bytes.extend_from_slice(&self.reply_to.id().to_le_bytes());
+        Ok(bytes)
+    }
+}
+
+// 3. Define deserializer
+fn deserialize_ping(data: &[u8]) -> Result<Box<dyn SerializableMessage>, SerializationError> {
+    // Your deserialization logic
+    let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let node = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+    let id = u64::from_le_bytes([data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]]);
+    Ok(Box::new(PingMsg { count, reply_to: Pid::with_node(node, id) }))
+}
+
+// 4. Register message type (do this once, typically in actor constructor)
+register_message_type("myapp::PingMsg", Box::new(deserialize_ping));
+
+// 5. Send messages!
+struct MyActor { dist_system: Arc<DistributedSystem> }
+
+#[async_trait]
+impl Actor for MyActor {
+    async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+        // Wrap message for serialization
+        let ping = PingMsg { count: 1, reply_to: ctx.pid() };
+        let msg: Message = Box::new(Box::new(ping) as Box<dyn SerializableMessage>);
+        
+        // Send to remote actor
+        let remote_pid = Pid::with_node(remote_node_id, remote_actor_id);
+        self.dist_system.send(ctx.pid(), remote_pid, msg).await.ok();
+    }
+}
+```
+
+### Using the `impl_serializable!` Macro
+
+For simpler cases, use the convenience macro:
+
+```rust
+use joerl::impl_serializable;
+
+#[derive(Debug, Clone)]
+struct SimpleMsg { value: i32 }
+
+impl_serializable!(SimpleMsg, "myapp::SimpleMsg", |msg: &SimpleMsg| {
+    Ok(msg.value.to_le_bytes().to_vec())
+});
+```
+
+### Message Type Guidelines
+
+1. **Unique Type IDs**: Use namespaced identifiers like `"myapp::MessageName"`
+2. **Stable Format**: Don't change serialization format after deployment
+3. **Version Compatibility**: Consider adding version fields for upgrades
+4. **Register Once**: Call `register_message_type()` in `Actor::started()` or globally
+5. **All Messages Serializable**: All messages sent across nodes must implement `SerializableMessage`
+
+### Complete Example
+
+See `examples/remote_ping_pong.rs` for a complete working example:
+
+```bash
+# Terminal 1: Start server
+cargo run --example remote_ping_pong -- server
+
+# Terminal 2: Start client
+cargo run --example remote_ping_pong -- client
+```
 
 ## Quick Start with EPMD
 

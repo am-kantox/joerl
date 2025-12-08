@@ -254,6 +254,7 @@ struct ActorEntry {
 /// ```
 pub struct ActorSystem {
     actors: Arc<DashMap<Pid, ActorEntry>>,
+    local_node_id: u32, // 0 for local-only, or node hash for distributed
 }
 
 impl ActorSystem {
@@ -261,7 +262,21 @@ impl ActorSystem {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             actors: Arc::new(DashMap::new()),
+            local_node_id: 0, // Local-only by default
         })
+    }
+
+    /// Creates a new actor system with a specific node ID (for distributed systems).
+    pub(crate) fn with_node_id(node_id: u32) -> Arc<Self> {
+        Arc::new(Self {
+            actors: Arc::new(DashMap::new()),
+            local_node_id: node_id,
+        })
+    }
+
+    /// Returns the local node ID (0 for local-only systems).
+    pub fn local_node_id(&self) -> u32 {
+        self.local_node_id
     }
 
     /// Spawns a new actor with default mailbox capacity.
@@ -391,10 +406,19 @@ impl ActorSystem {
         capacity: usize,
         actor_type: &str,
     ) -> ActorRef {
-        let pid = Pid::new();
+        // Create Pid with the system's local_node_id (0 for local-only, node_id for distributed)
+        let local_pid = Pid::new();
+        let pid = if self.local_node_id == 0 {
+            local_pid
+        } else {
+            Pid::with_node(self.local_node_id, local_pid.id())
+        };
         let actor_type_owned = actor_type.to_string();
         let (mailbox, sender) = Mailbox::new_with_type(capacity, actor_type_owned.clone());
         let mut ctx = ActorContext::new(pid, mailbox);
+
+        // Set system reference in context
+        ctx.set_system(Arc::downgrade(self));
 
         // Register actor
         let entry = ActorEntry {

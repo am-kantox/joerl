@@ -52,6 +52,7 @@
 //! ```
 
 use crate::Message;
+use once_cell::sync::Lazy;
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
@@ -313,6 +314,99 @@ impl Default for MessageRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Global message registry for distributed messaging.
+///
+/// This singleton registry is shared across all DistributedSystems and must
+/// be populated with message type deserializers before sending remote messages.
+///
+/// # Thread Safety
+///
+/// The global registry is thread-safe and can be accessed from any thread.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::serialization::{register_message_type, SerializableMessage, SerializationError};
+/// use std::any::Any;
+///
+/// struct MyMsg(u32);
+///
+/// impl SerializableMessage for MyMsg {
+///     fn message_type_id(&self) -> &'static str { "MyMsg" }
+///     fn as_any(&self) -> &dyn Any { self }
+///     fn serialize(&self) -> Result<Vec<u8>, SerializationError> {
+///         Ok(self.0.to_le_bytes().to_vec())
+///     }
+/// }
+///
+/// // Register before creating DistributedSystem
+/// register_message_type("MyMsg", Box::new(|data| {
+///     if data.len() != 4 {
+///         return Err(SerializationError::InvalidFormat("Expected 4 bytes".into()));
+///     }
+///     let value = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+///     Ok(Box::new(MyMsg(value)))
+/// }));
+/// ```
+static GLOBAL_REGISTRY: Lazy<Arc<RwLock<MessageRegistry>>> =
+    Lazy::new(|| Arc::new(RwLock::new(MessageRegistry::new())));
+
+/// Registers a message type deserializer in the global registry.
+///
+/// This function must be called to register message types before they can be
+/// sent across distributed nodes. Typically called during actor initialization
+/// or at application startup.
+///
+/// # Arguments
+///
+/// * `type_id` - Unique identifier for the message type (must match `message_type_id()`)
+/// * `deserializer` - Function to deserialize bytes into the message
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::serialization::{register_message_type, SerializableMessage, SerializationError};
+/// use std::any::Any;
+///
+/// struct PingMsg;
+///
+/// impl SerializableMessage for PingMsg {
+///     fn message_type_id(&self) -> &'static str { "PingMsg" }
+///     fn as_any(&self) -> &dyn Any { self }
+///     fn serialize(&self) -> Result<Vec<u8>, SerializationError> {
+///         Ok(vec![])
+///     }
+/// }
+///
+/// // Register the deserializer
+/// register_message_type("PingMsg", Box::new(|_| Ok(Box::new(PingMsg))));
+/// ```
+pub fn register_message_type(type_id: &str, deserializer: Deserializer) {
+    GLOBAL_REGISTRY
+        .write()
+        .unwrap()
+        .register(type_id, deserializer);
+}
+
+/// Returns a reference to the global message registry.
+///
+/// This is used internally by the distributed system for message deserialization.
+/// Users typically don't need to call this directly.
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::serialization::get_global_registry;
+///
+/// let registry = get_global_registry();
+/// let registry_guard = registry.read().unwrap();
+/// let count = registry_guard.len();
+/// println!("Registered message types: {}", count);
+/// ```
+pub fn get_global_registry() -> Arc<RwLock<MessageRegistry>> {
+    Arc::clone(&GLOBAL_REGISTRY)
 }
 
 /// Envelope for serialized messages.

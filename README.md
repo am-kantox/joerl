@@ -14,6 +14,7 @@ An Erlang-inspired actor model library for Rust, named in tribute to [Joe Armstr
 - 🌳 **Supervision Trees**: Robust error handling with configurable restart strategies  
 - 🔗 **Links & Monitors**: Actor relationships for failure detection and propagation
 - 📬 **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
+- 🌐 **Distributed Messaging**: Full location-transparent remote messaging with EPMD discovery
 - ⚡ **Async/Await**: Built on tokio for excellent performance
 - 📊 **Telemetry & Observability**: Comprehensive metrics and tracing with Prometheus/OpenTelemetry support
 - 🦀 **Erlang Conventions**: Familiar API for Erlang/OTP developers

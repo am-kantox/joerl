@@ -103,6 +103,7 @@ pub struct ActorContext {
     trap_exit: bool,
     should_stop: bool,
     stop_reason: Option<ExitReason>,
+    system: Option<std::sync::Weak<crate::ActorSystem>>,
 }
 
 impl ActorContext {
@@ -114,7 +115,13 @@ impl ActorContext {
             trap_exit: false,
             should_stop: false,
             stop_reason: None,
+            system: None,
         }
+    }
+
+    /// Sets the system reference (called internally during spawn).
+    pub(crate) fn set_system(&mut self, system: std::sync::Weak<crate::ActorSystem>) {
+        self.system = Some(system);
     }
 
     /// Returns the Pid of this actor.
@@ -244,6 +251,52 @@ impl ActorContext {
     #[allow(dead_code)]
     pub(crate) fn close_mailbox(&mut self) {
         self.mailbox.close();
+    }
+
+    /// Sends a message to another actor.
+    ///
+    /// This is the primary way for actors to communicate. The sender Pid is
+    /// automatically tracked from this context.
+    ///
+    /// # Arguments
+    ///
+    /// * `to` - The Pid of the target actor
+    /// * `msg` - The message to send
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The target actor doesn't exist
+    /// - The target actor's mailbox is full
+    /// - For remote messages: serialization fails or node is unreachable
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, ActorSystem, Message, Pid};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker {
+    ///     peer: Option<Pid>,
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+    ///         if let Some(peer_pid) = self.peer {
+    ///             // Send reply to peer
+    ///             ctx.send(peer_pid, Box::new("Reply".to_string())).await.ok();
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub async fn send(&self, to: Pid, msg: Message) -> crate::Result<()> {
+        if let Some(system_weak) = &self.system
+            && let Some(system) = system_weak.upgrade()
+        {
+            return system.send(to, msg).await;
+        }
+        Err(crate::ActorError::SendFailed(to))
     }
 }
 

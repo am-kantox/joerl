@@ -112,6 +112,7 @@ pub use error::{ActorError, Result};
 pub use health::{HealthConfig, HealthIssue, HealthStatus, IssueSeverity, SystemHealth};
 pub use message::{ExitReason, Message, MonitorRef, Signal};
 pub use pid::Pid;
+pub use serialization::{get_global_registry, register_message_type};
 pub use supervisor::{RestartStrategy, Supervisor, SupervisorSpec};
 pub use system::{ActorRef, ActorSystem};
 
