@@ -34,6 +34,7 @@ enum Command {
 
 #[derive(Debug, Clone)]
 struct JobResult {
+    #[allow(dead_code)]
     job_id: String,
     result: String,
     processing_time_ms: u64,

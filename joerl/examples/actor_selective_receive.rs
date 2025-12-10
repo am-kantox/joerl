@@ -185,30 +185,29 @@ impl Actor for ClientActor {
 
 /// Actor that demonstrates try_receive (non-blocking)
 struct MonitorActor {
-    monitored: Pid,
     stats: Arc<Mutex<Vec<String>>>,
 }
 
 #[async_trait]
 impl Actor for MonitorActor {
     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
-        if let Some(cmd) = msg.downcast_ref::<&str>() {
-            if *cmd == "check" {
-                println!("👀 [Monitor] Checking for any responses...");
+        if let Some(cmd) = msg.downcast_ref::<&str>()
+            && *cmd == "check"
+        {
+            println!("👀 [Monitor] Checking for any responses...");
 
-                // Try to receive without blocking
-                // This checks pending queue and current mailbox
-                let response = ctx.try_receive(|msg| msg.downcast_ref::<Response>().cloned());
+            // Try to receive without blocking
+            // This checks pending queue and current mailbox
+            let response = ctx.try_receive(|msg| msg.downcast_ref::<Response>().cloned());
 
-                match response {
-                    Some(resp) => {
-                        let stat = format!("Found response {} in mailbox", resp.correlation_id);
-                        println!("📊 [Monitor] {}", stat);
-                        self.stats.lock().await.push(stat);
-                    }
-                    None => {
-                        println!("📊 [Monitor] No responses in mailbox");
-                    }
+            match response {
+                Some(resp) => {
+                    let stat = format!("Found response {} in mailbox", resp.correlation_id);
+                    println!("📊 [Monitor] {}", stat);
+                    self.stats.lock().await.push(stat);
+                }
+                None => {
+                    println!("📊 [Monitor] No responses in mailbox");
                 }
             }
         }
@@ -260,7 +259,6 @@ async fn main() {
     // Spawn monitor that uses try_receive
     let monitor_stats = Arc::new(Mutex::new(Vec::new()));
     let monitor = system.spawn(MonitorActor {
-        monitored: server.pid(),
         stats: monitor_stats.clone(),
     });
 
