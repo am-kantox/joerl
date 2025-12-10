@@ -109,6 +109,7 @@ pub mod telemetry;
 // Re-export commonly used types
 pub use actor::{Actor, ActorContext};
 pub use error::{ActorError, Result};
+pub use gen_server::{CallResponse, ReplyHandle};
 pub use health::{HealthConfig, HealthIssue, HealthStatus, IssueSeverity, SystemHealth};
 pub use message::{ExitReason, Message, MonitorRef, Signal};
 pub use pid::Pid;

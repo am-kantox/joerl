@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use joerl::gen_server::{GenServer, GenServerContext};
+use joerl::gen_server::{CallResponse, GenServer, GenServerContext};
 use joerl::gen_statem::{GenStatem, StateMachineContext, StateTransition};
 use joerl::supervisor::{ChildSpec, RestartStrategy, SupervisorSpec, spawn_supervisor};
 use joerl::{Actor, ActorContext, ActorSystem, ExitReason, Message};
@@ -63,12 +63,12 @@ impl GenServer for CounterServer {
         call: Self::Call,
         state: &mut Self::State,
         _ctx: &mut GenServerContext<'_, Self>,
-    ) -> Self::CallReply {
+    ) -> CallResponse<Self::CallReply> {
         match call {
-            CounterCall::Get => *state,
+            CounterCall::Get => CallResponse::Reply(*state),
             CounterCall::Add(n) => {
                 *state += n;
-                *state
+                CallResponse::Reply(*state)
             }
         }
     }

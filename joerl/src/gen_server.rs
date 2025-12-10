@@ -58,12 +58,12 @@
 //!         call: Self::Call,
 //!         state: &mut Self::State,
 //!         _ctx: &mut GenServerContext<'_, Self>,
-//!     ) -> Self::CallReply {
+//!     ) -> CallResponse<Self::CallReply> {
 //!         match call {
-//!             CounterCall::Get => *state,
+//!             CounterCall::Get => CallResponse::Reply(*state),
 //!             CounterCall::Add(n) => {
 //!                 *state += n;
-//!                 *state
+//!                 CallResponse::Reply(*state)
 //!             }
 //!         }
 //!     }
@@ -106,7 +106,7 @@
 //! #     type Cast = CounterCast;
 //! #     type CallReply = i32;
 //! #     async fn init(&mut self, _ctx: &mut gen_server::GenServerContext<'_, Self>) -> Self::State { 0 }
-//! #     async fn handle_call(&mut self, call: Self::Call, state: &mut Self::State, _ctx: &mut gen_server::GenServerContext<'_, Self>) -> Self::CallReply { *state }
+//! #     async fn handle_call(&mut self, call: Self::Call, state: &mut Self::State, _ctx: &mut gen_server::GenServerContext<'_, Self>) -> gen_server::CallResponse<Self::CallReply> { gen_server::CallResponse::Reply(*state) }
 //! #     async fn handle_cast(&mut self, _cast: Self::Cast, state: &mut Self::State, _ctx: &mut gen_server::GenServerContext<'_, Self>) { *state += 1; }
 //! # }
 //! # async fn example() {
@@ -126,7 +126,7 @@ use crate::{
     error::{ActorError, Result},
     message::{ExitReason, Message},
     pid::Pid,
-    system::{ActorRef, ActorSystem},
+    system::ActorSystem,
     telemetry::{GenServerMetrics, actor_type_name},
 };
 use async_trait::async_trait;
@@ -134,6 +134,131 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::oneshot;
+
+/// Response from `handle_call` - can be immediate or deferred.
+///
+/// In Erlang, gen_server's handle_call can return:
+/// - `{reply, Reply, State}` - immediate reply
+/// - `{noreply, State}` - defer reply, call `gen_server:reply/2` later
+///
+/// This enum provides the same semantics in Rust.
+pub enum CallResponse<T> {
+    /// Reply immediately (default behavior).
+    ///
+    /// The value is sent back to the caller right away.
+    Reply(T),
+
+    /// Defer the reply.
+    ///
+    /// The server can continue processing messages and call `reply()` later.
+    /// This is useful for:
+    /// - Long-running operations that shouldn't block the mailbox
+    /// - Spawning background tasks
+    /// - Waiting for external events
+    ///
+    /// In Erlang: `{noreply, State}` + `gen_server:reply(From, Reply)`
+    NoReply,
+}
+
+/// Handle for sending deferred replies.
+///
+/// When `handle_call` returns `CallResponse::NoReply`, a `ReplyHandle` is
+/// provided to the callback. This handle can be used to send the reply later,
+/// even from a different task or actor.
+///
+/// In Erlang: the `From` parameter in `gen_server:reply/2`
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::gen_server::{GenServer, GenServerContext, CallResponse, ReplyHandle};
+/// use async_trait::async_trait;
+///
+/// struct AsyncWorker;
+///
+/// #[derive(Debug)]
+/// enum WorkRequest {
+///     Expensive(String),
+/// }
+///
+/// #[async_trait]
+/// impl GenServer for AsyncWorker {
+///     type State = ();
+///     type Call = WorkRequest;
+///     type Cast = ();
+///     type CallReply = String;
+///
+///     async fn init(&mut self, _ctx: &mut GenServerContext<'_, Self>) -> Self::State {
+///         ()
+///     }
+///
+///     async fn handle_call(
+///         &mut self,
+///         call: Self::Call,
+///         _state: &mut Self::State,
+///         ctx: &mut GenServerContext<'_, Self>,
+///     ) -> CallResponse<Self::CallReply> {
+///         match call {
+///             WorkRequest::Expensive(data) => {
+///                 // Get the reply handle
+///                 let handle = ctx.reply_handle();
+///                 
+///                 // Spawn background work
+///                 tokio::spawn(async move {
+///                     let result = expensive_work(data).await;
+///                     handle.reply(result).ok();
+///                 });
+///                 
+///                 // Return immediately - mailbox keeps processing
+///                 CallResponse::NoReply
+///             }
+///         }
+///     }
+///
+///     async fn handle_cast(&mut self, _: Self::Cast, _: &mut Self::State, _: &mut GenServerContext<'_, Self>) {}
+/// }
+///
+/// # async fn expensive_work(_data: String) -> String { "result".to_string() }
+/// ```
+pub struct ReplyHandle<T> {
+    reply_tx: Option<oneshot::Sender<T>>,
+}
+
+impl<T> ReplyHandle<T> {
+    /// Create a new reply handle (internal use).
+    pub(crate) fn new(reply_tx: oneshot::Sender<T>) -> Self {
+        Self {
+            reply_tx: Some(reply_tx),
+        }
+    }
+
+    /// Send the deferred reply.
+    ///
+    /// This consumes the handle and sends the reply to the waiting caller.
+    /// If the caller has already timed out or cancelled, this returns an error.
+    ///
+    /// In Erlang: `gen_server:reply(From, Reply)`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the receiver has been dropped or reply was already sent.
+    pub fn reply(mut self, value: T) -> Result<()> {
+        if let Some(tx) = self.reply_tx.take() {
+            tx.send(value)
+                .map_err(|_| ActorError::other("reply failed: receiver dropped"))
+        } else {
+            Err(ActorError::other("reply already sent"))
+        }
+    }
+}
+
+impl<T> Drop for ReplyHandle<T> {
+    fn drop(&mut self) {
+        if self.reply_tx.is_some() {
+            tracing::warn!("ReplyHandle dropped without calling reply() - caller will timeout");
+        }
+    }
+}
 
 /// The GenServer trait defines callbacks for the generic server behavior.
 ///
@@ -170,15 +295,19 @@ pub trait GenServer: Send + 'static {
     /// Handle synchronous call requests.
     ///
     /// This method is called when `GenServerRef::call()` is invoked.
-    /// The return value is sent back to the caller.
+    /// Return `CallResponse::Reply(value)` for immediate replies, or
+    /// `CallResponse::NoReply` to defer the reply.
     ///
-    /// In Erlang: `handle_call/3`
+    /// When returning `NoReply`, obtain a `ReplyHandle` via
+    /// `ctx.reply_handle()` before returning.
+    ///
+    /// In Erlang: `handle_call/3` returning `{reply, Reply, State}` or `{noreply, State}`
     async fn handle_call(
         &mut self,
         call: Self::Call,
         state: &mut Self::State,
         ctx: &mut GenServerContext<'_, Self>,
-    ) -> Self::CallReply;
+    ) -> CallResponse<Self::CallReply>;
 
     /// Handle asynchronous cast messages.
     ///
@@ -228,6 +357,7 @@ pub trait GenServer: Send + 'static {
 /// underlying actor context for advanced operations.
 pub struct GenServerContext<'a, G: GenServer + ?Sized> {
     actor_ctx: &'a mut ActorContext,
+    reply_handle: Option<ReplyHandle<G::CallReply>>,
     _phantom: PhantomData<G>,
 }
 
@@ -235,8 +365,13 @@ impl<'a, G: GenServer> GenServerContext<'a, G> {
     fn new(actor_ctx: &'a mut ActorContext) -> Self {
         Self {
             actor_ctx,
+            reply_handle: None,
             _phantom: PhantomData,
         }
+    }
+
+    fn set_reply_handle(&mut self, handle: ReplyHandle<G::CallReply>) {
+        self.reply_handle = Some(handle);
     }
 
     /// Get the server's Pid
@@ -252,6 +387,22 @@ impl<'a, G: GenServer> GenServerContext<'a, G> {
     /// Enable or disable exit signal trapping
     pub fn trap_exit(&mut self, trap: bool) {
         self.actor_ctx.trap_exit(trap);
+    }
+
+    /// Get a reply handle for deferred replies.
+    ///
+    /// This should only be called when returning `CallResponse::NoReply`
+    /// from `handle_call`. The handle can be stored and used later to
+    /// send the reply.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called outside of a `handle_call` context or if the
+    /// reply handle has already been taken.
+    pub fn reply_handle(&mut self) -> ReplyHandle<G::CallReply> {
+        self.reply_handle
+            .take()
+            .expect("reply_handle() called outside handle_call or already taken")
     }
 }
 
@@ -310,8 +461,23 @@ impl<G: GenServer> Actor for GenServerActor<G> {
                     let _span = GenServerMetrics::call_span(self.server_type);
                     GenServerMetrics::calls_in_flight_inc(self.server_type);
 
-                    let reply = self.server.handle_call(request, state, &mut gen_ctx).await;
-                    let _ = reply_tx.send(reply); // Ignore send errors (caller may have cancelled)
+                    // Set up reply handle for potential NoReply response
+                    gen_ctx.set_reply_handle(ReplyHandle::new(reply_tx));
+
+                    let response = self.server.handle_call(request, state, &mut gen_ctx).await;
+
+                    match response {
+                        CallResponse::Reply(value) => {
+                            // Immediate reply - get the handle back and use it
+                            if let Some(handle) = gen_ctx.reply_handle.take() {
+                                let _ = handle.reply(value); // Ignore send errors
+                            }
+                        }
+                        CallResponse::NoReply => {
+                            // Deferred reply - handle was taken by user code via reply_handle()
+                            // or will be dropped with a warning
+                        }
+                    }
 
                     GenServerMetrics::calls_in_flight_dec(self.server_type);
                 }
@@ -338,14 +504,25 @@ impl<G: GenServer> Actor for GenServerActor<G> {
 ///
 /// Provides `call()` and `cast()` methods for interacting with the server.
 pub struct GenServerRef<G: GenServer> {
-    actor_ref: ActorRef,
+    pid: Pid,
+    system: Arc<ActorSystem>,
     _phantom: PhantomData<G>,
+}
+
+impl<G: GenServer> Clone for GenServerRef<G> {
+    fn clone(&self) -> Self {
+        Self {
+            pid: self.pid,
+            system: self.system.clone(),
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<G: GenServer> GenServerRef<G> {
     /// Get the server's Pid
     pub fn pid(&self) -> Pid {
-        self.actor_ref.pid()
+        self.pid
     }
 
     /// Make a synchronous call to the server.
@@ -361,10 +538,9 @@ impl<G: GenServer> GenServerRef<G> {
             reply_tx: tx,
         };
 
-        self.actor_ref.send(Box::new(msg)).await?;
+        self.system.send(self.pid, Box::new(msg)).await?;
 
-        rx.await
-            .map_err(|_| ActorError::ActorNotFound(self.actor_ref.pid()))
+        rx.await.map_err(|_| ActorError::ActorNotFound(self.pid))
     }
 
     /// Send an asynchronous cast to the server.
@@ -374,7 +550,7 @@ impl<G: GenServer> GenServerRef<G> {
     /// In Erlang: `gen_server:cast/2`
     pub async fn cast(&self, message: G::Cast) -> Result<()> {
         let msg: GenServerMsg<G> = GenServerMsg::Cast { message };
-        self.actor_ref.send(Box::new(msg)).await
+        self.system.send(self.pid, Box::new(msg)).await
     }
 
     /// Send a generic info message to the server.
@@ -382,7 +558,7 @@ impl<G: GenServer> GenServerRef<G> {
     /// In Erlang: `Pid ! Message`
     pub async fn send_info(&self, message: Message) -> Result<()> {
         let msg: GenServerMsg<G> = GenServerMsg::Info { message };
-        self.actor_ref.send(Box::new(msg)).await
+        self.system.send(self.pid, Box::new(msg)).await
     }
 }
 
@@ -396,7 +572,8 @@ pub fn spawn<G: GenServer>(system: &Arc<ActorSystem>, server: G) -> GenServerRef
     let actor_ref = system.spawn(actor);
 
     GenServerRef {
-        actor_ref,
+        pid: actor_ref.pid(),
+        system: system.clone(),
         _phantom: PhantomData,
     }
 }

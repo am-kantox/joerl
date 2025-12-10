@@ -44,7 +44,7 @@
 
 use async_trait::async_trait;
 use joerl::ActorSystem;
-use joerl::gen_server::{GenServer, GenServerContext};
+use joerl::gen_server::{CallResponse, GenServer, GenServerContext};
 
 // ============================================================================
 // Counter GenServer Implementation
@@ -90,11 +90,11 @@ impl GenServer for CounterServer {
         call: Self::Call,
         state: &mut Self::State,
         ctx: &mut GenServerContext<'_, Self>,
-    ) -> Self::CallReply {
+    ) -> CallResponse<Self::CallReply> {
         match call {
             CounterCall::Get => {
                 println!("[Counter {}] handle_call(Get) -> {}", ctx.pid(), *state);
-                *state
+                CallResponse::Reply(*state)
             }
             CounterCall::Add(n) => {
                 *state += n;
@@ -104,7 +104,7 @@ impl GenServer for CounterServer {
                     n,
                     *state
                 );
-                *state
+                CallResponse::Reply(*state)
             }
         }
     }
