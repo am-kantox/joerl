@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "joerl"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "actix",
  "async-trait",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "joerl_macro"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
