@@ -256,6 +256,107 @@ impl GenServer for Counter {
 3. Keep your mental model: actors, supervision, links, monitors
 4. Gain Rust's type safety and performance
 
+### Deferred Reply Pattern
+
+joerl supports Erlang's deferred reply pattern with `{noreply, State}` and `gen_server:reply/2`. This allows GenServers to accept requests, return control to process other messages, and reply later when work completes:
+
+```rust
+use joerl::gen_server::{CallResponse, GenServer, GenServerContext, ReplyHandle};
+
+#[async_trait]
+impl GenServer for JobProcessor {
+    async fn handle_call(
+        &mut self,
+        job: Self::Call,
+        state: &mut Self::State,
+        ctx: &mut GenServerContext<'_, Self>,
+    ) -> CallResponse<Self::CallReply> {
+        match job {
+            Job::Quick(data) => {
+                // Immediate reply
+                CallResponse::Reply(process_quick(data))
+            }
+            Job::Slow(data) => {
+                // Defer reply for async work
+                let reply_handle = ctx.reply_handle();
+                
+                tokio::spawn(async move {
+                    let result = expensive_computation(data).await;
+                    reply_handle.reply(result).expect("reply failed");
+                });
+                
+                // Return immediately without replying
+                CallResponse::NoReply
+            }
+        }
+    }
+}
+```
+
+**Key benefits:**
+- Server remains responsive during long-running operations
+- Multiple concurrent deferred calls supported
+- Caller awaits transparently (doesn't know if reply is deferred)
+- Matches Erlang semantics exactly
+
+See `examples/gen_server_deferred_reply.rs` for a complete example.
+
+### Selective Receive
+
+Like Erlang's `receive` with pattern matching, joerl provides selective receive to wait for specific messages while leaving others in the mailbox:
+
+```rust
+use joerl::{Actor, ActorContext, Message};
+
+#[async_trait]
+impl Actor for RpcClient {
+    async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+        if let Some(request_id) = msg.downcast_ref::<u64>() {
+            let id = *request_id;
+            
+            // Send request to server
+            ctx.send(server, Box::new(Request { id, ... })).await;
+            
+            // Wait for specific response with matching ID
+            let response = ctx.receive_timeout(
+                |msg| {
+                    msg.downcast_ref::<Response>()
+                        .filter(|r| r.correlation_id == id)
+                        .cloned()
+                },
+                Duration::from_secs(5)
+            ).await;
+            
+            match response {
+                Some(resp) => println!("Got response: {:?}", resp),
+                None => println!("Timeout waiting for response"),
+            }
+        }
+    }
+}
+```
+
+**Available methods:**
+- `ctx.receive(predicate)` - Wait indefinitely for matching message
+- `ctx.receive_timeout(predicate, timeout)` - Wait with timeout
+- `ctx.try_receive(predicate)` - Non-blocking check
+
+**How it works:**
+- Non-matching messages saved to pending queue
+- Pending queue checked first on subsequent receives
+- Maintains message ordering through VecDeque
+- Perfect for RPC, correlation IDs, state machines
+
+See `examples/actor_selective_receive.rs` for RPC implementation with correlation IDs.
+
+**Erlang mapping:**
+
+| Erlang | joerl |
+|--------|-------|
+| `receive Pattern -> Body end` | `ctx.receive(predicate).await` |
+| `receive Pattern -> Body after Timeout -> TimeoutBody end` | `ctx.receive_timeout(predicate, timeout).await` |
+| Messages stay in mailbox when not matched | Same - pending queue preserves them |
+
 ## Property-Based Testing: Proof of Correctness
 
 joerl uses extensive property-based testing with QuickCheck to verify correctness. Instead of hand-written test cases, properties are defined that should hold for **all** inputs, then hundreds of random test cases are generated.
@@ -310,6 +411,8 @@ For full details, see [PROPERTY_TESTING.md](PROPERTY_TESTING.md).
 1. **Learn by example**: Check the [`examples/`](joerl/examples/) directory
    - `counter.rs` - Basic actor
    - `gen_server_counter.rs` - GenServer pattern
+   - `gen_server_deferred_reply.rs` - Deferred reply with async work
+   - `actor_selective_receive.rs` - RPC with correlation IDs
    - `supervision_tree.rs` - Fault tolerance
    - `telemetry_demo.rs` - Monitoring
    - `distributed_cluster.rs` - Multi-node systems
