@@ -26,7 +26,7 @@
 //! In joerl, the equivalent looks like:
 //!
 //! ```rust
-//! use joerl::gen_server::{GenServer, GenServerContext};
+//! use joerl::gen_server::{GenServer, GenServerContext, CallResponse};
 //! use async_trait::async_trait;
 //!
 //! struct Counter;

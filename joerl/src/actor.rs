@@ -429,7 +429,7 @@ impl ActorContext {
     ///         // Check if there's a ready message without waiting
     ///         if let Some(ready) = ctx.try_receive(|msg| {
     ///             msg.downcast_ref::<String>()
-    ///                 .filter(|s| s == "ready")
+    ///                 .filter(|s| s.as_str() == "ready")
     ///                 .cloned()
     ///         }) {
     ///             println!("Got ready signal: {}", ready);
