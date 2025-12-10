@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use joerl::{
-    ActorSystem, ExitReason,
+    ActorSystem,
     gen_server::{self, CallResponse, GenServer, GenServerContext, ReplyHandle},
 };
 use std::sync::Arc;

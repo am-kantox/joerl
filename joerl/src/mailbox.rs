@@ -5,17 +5,26 @@
 
 use crate::message::Envelope;
 use crate::telemetry::MessageMetrics;
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::time::Duration;
 use tokio::sync::mpsc;
-
-/// Default mailbox capacity.
 pub const DEFAULT_MAILBOX_CAPACITY: usize = 100;
 
 /// Actor mailbox for receiving messages.
 ///
 /// Mailboxes are bounded channels that provide backpressure when full.
 /// This prevents fast senders from overwhelming slow receivers.
+///
+/// The mailbox now supports selective receive (similar to Erlang's `receive`)
+/// by maintaining a pending queue for messages that don't match the current
+/// receive pattern.
 pub struct Mailbox {
     rx: mpsc::Receiver<Envelope>,
+    /// Messages that didn't match a selective receive predicate.
+    /// These are checked first on subsequent receives.
+    /// Wrapped in Mutex to maintain Sync for ActorContext.
+    pending: Mutex<VecDeque<Envelope>>,
 }
 
 impl Mailbox {
@@ -28,7 +37,10 @@ impl Mailbox {
     /// Creates a new mailbox with actor type for telemetry.
     pub(crate) fn new_with_type(capacity: usize, actor_type: String) -> (Self, MailboxSender) {
         let (tx, rx) = mpsc::channel(capacity);
-        let mailbox = Mailbox { rx };
+        let mailbox = Mailbox {
+            rx,
+            pending: Mutex::new(VecDeque::new()),
+        };
         let sender = MailboxSender {
             tx,
             actor_type,
@@ -40,7 +52,13 @@ impl Mailbox {
     /// Receives the next message from the mailbox.
     ///
     /// Returns `None` if all senders have been dropped.
+    ///
+    /// This now checks the pending queue first before receiving from the channel.
     pub(crate) async fn recv(&mut self) -> Option<Envelope> {
+        // Check pending queue first
+        if let Some(envelope) = self.pending.lock().unwrap().pop_front() {
+            return Some(envelope);
+        }
         self.rx.recv().await
     }
 
@@ -55,6 +73,120 @@ impl Mailbox {
     /// Closes the mailbox, preventing any further messages from being sent.
     pub fn close(&mut self) {
         self.rx.close();
+    }
+
+    /// Selectively receive a message matching the predicate.
+    ///
+    /// This is similar to Erlang's `receive` with pattern matching.
+    /// Messages that don't match are saved in the pending queue and
+    /// will be checked again on subsequent receives.
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - Function that returns `Some(T)` if the message matches
+    /// * `timeout` - Optional timeout duration
+    ///
+    /// # Returns
+    ///
+    /// * `Some(T)` - A matching message was found
+    /// * `None` - Timeout expired or all senders dropped
+    pub(crate) async fn recv_matching<F, T>(
+        &mut self,
+        mut predicate: F,
+        timeout: Option<Duration>,
+    ) -> Option<T>
+    where
+        F: FnMut(&crate::message::Message) -> Option<T>,
+    {
+        use crate::message::EnvelopeContent;
+
+        // First check pending messages
+        {
+            let mut pending = self.pending.lock().unwrap();
+            for i in 0..pending.len() {
+                if let Some(envelope) = pending.get(i)
+                    && let EnvelopeContent::Message(msg) = &envelope.content
+                    && let Some(result) = predicate(msg)
+                {
+                    // Found a match - remove it and return
+                    pending.remove(i);
+                    return Some(result);
+                }
+            }
+        }
+
+        // Then check incoming messages
+        let deadline = timeout.map(|d| tokio::time::Instant::now() + d);
+
+        loop {
+            let envelope = if let Some(deadline) = deadline {
+                match tokio::time::timeout_at(deadline, self.rx.recv()).await {
+                    Ok(Some(env)) => env,
+                    Ok(None) => return None, // Channel closed
+                    Err(_) => return None,   // Timeout
+                }
+            } else {
+                self.rx.recv().await?
+            };
+
+            match envelope.content {
+                EnvelopeContent::Message(ref msg) => {
+                    if let Some(result) = predicate(msg) {
+                        // Found a match
+                        return Some(result);
+                    } else {
+                        // Doesn't match - save for later
+                        self.pending.lock().unwrap().push_back(envelope);
+                    }
+                }
+                EnvelopeContent::Signal(_) => {
+                    // Signals always go to pending - they should be processed by handle_signal
+                    self.pending.lock().unwrap().push_back(envelope);
+                }
+            }
+        }
+    }
+
+    /// Try to receive a matching message without blocking.
+    ///
+    /// Only checks the pending queue and tries one receive from the channel.
+    pub(crate) fn try_recv_matching<F, T>(&mut self, mut predicate: F) -> Option<T>
+    where
+        F: FnMut(&crate::message::Message) -> Option<T>,
+    {
+        use crate::message::EnvelopeContent;
+
+        // Check pending messages first
+        {
+            let mut pending = self.pending.lock().unwrap();
+            for i in 0..pending.len() {
+                if let Some(envelope) = pending.get(i)
+                    && let EnvelopeContent::Message(msg) = &envelope.content
+                    && let Some(result) = predicate(msg)
+                {
+                    pending.remove(i);
+                    return Some(result);
+                }
+            }
+        }
+
+        // Try one receive without blocking
+        if let Ok(envelope) = self.rx.try_recv() {
+            match envelope.content {
+                EnvelopeContent::Message(ref msg) => {
+                    if let Some(result) = predicate(msg) {
+                        return Some(result);
+                    } else {
+                        self.pending.lock().unwrap().push_back(envelope);
+                    }
+                }
+                EnvelopeContent::Signal(_) => {
+                    self.pending.lock().unwrap().push_back(envelope);
+                }
+            }
+        }
+
+        None
     }
 }
 

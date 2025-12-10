@@ -298,6 +298,151 @@ impl ActorContext {
         }
         Err(crate::ActorError::SendFailed(to))
     }
+
+    /// Selectively receive a message matching the predicate.
+    ///
+    /// This is similar to Erlang's `receive` with pattern matching.
+    /// Messages that don't match remain in the mailbox and will be
+    /// checked again on subsequent receive calls or regular message processing.
+    ///
+    /// This allows actors to wait for specific messages while leaving
+    /// other messages in the mailbox for later processing.
+    ///
+    /// In Erlang: `receive Pattern -> Body end`
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - Function that returns `Some(T)` if message matches
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// #[derive(Clone)]
+    /// struct Response {
+    ///     id: u64,
+    ///     data: String,
+    /// }
+    ///
+    /// struct RpcActor {
+    ///     next_id: u64,
+    /// }
+    ///
+    /// #[async_trait]
+    /// impl Actor for RpcActor {
+    ///     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+    ///         // Make a request with an ID
+    ///         let req_id = self.next_id;
+    ///         self.next_id += 1;
+    ///         
+    ///         // ... send request somewhere ...
+    ///         
+    ///         // Wait for specific response
+    ///         let response = ctx.receive(|msg| {
+    ///             msg.downcast_ref::<Response>()
+    ///                 .filter(|r| r.id == req_id)
+    ///                 .cloned()
+    ///         }).await;
+    ///         
+    ///         // Meanwhile, other messages stay in mailbox
+    ///     }
+    /// }
+    /// ```
+    pub async fn receive<F, T>(&mut self, predicate: F) -> Option<T>
+    where
+        F: FnMut(&Message) -> Option<T>,
+    {
+        self.mailbox.recv_matching(predicate, None).await
+    }
+
+    /// Selectively receive a message with timeout.
+    ///
+    /// Like `receive()`, but returns `None` if no matching message
+    /// arrives within the timeout duration.
+    ///
+    /// In Erlang: `receive Pattern -> Body after Timeout -> TimeoutBody end`
+    ///
+    /// # Arguments
+    ///
+    /// * `predicate` - Function that returns `Some(T)` if message matches
+    /// * `timeout` - Maximum time to wait
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    /// use std::time::Duration;
+    ///
+    /// #[derive(Clone)]
+    /// struct Ack {
+    ///     id: u64,
+    /// }
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, ctx: &mut ActorContext) {
+    ///         // Wait for ack, but timeout after 5 seconds
+    ///         let ack = ctx.receive_timeout(
+    ///             |msg| msg.downcast_ref::<Ack>().cloned(),
+    ///             Duration::from_secs(5)
+    ///         ).await;
+    ///         
+    ///         match ack {
+    ///             Some(ack) => println!("Got ack: {}", ack.id),
+    ///             None => println!("Timeout waiting for ack"),
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub async fn receive_timeout<F, T>(
+        &mut self,
+        predicate: F,
+        timeout: std::time::Duration,
+    ) -> Option<T>
+    where
+        F: FnMut(&Message) -> Option<T>,
+    {
+        self.mailbox.recv_matching(predicate, Some(timeout)).await
+    }
+
+    /// Try to receive a matching message without blocking.
+    ///
+    /// Returns immediately with `Some(T)` if a matching message is found,
+    /// or `None` if no match is available.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, ctx: &mut ActorContext) {
+    ///         // Check if there's a ready message without waiting
+    ///         if let Some(ready) = ctx.try_receive(|msg| {
+    ///             msg.downcast_ref::<String>()
+    ///                 .filter(|s| s == "ready")
+    ///                 .cloned()
+    ///         }) {
+    ///             println!("Got ready signal: {}", ready);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn try_receive<F, T>(&mut self, predicate: F) -> Option<T>
+    where
+        F: FnMut(&Message) -> Option<T>,
+    {
+        self.mailbox.try_recv_matching(predicate)
+    }
 }
 
 #[cfg(test)]
