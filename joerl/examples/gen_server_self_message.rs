@@ -79,9 +79,6 @@ impl GenServer for Counter {
                 state.0 += 1;
                 println!("[Counter] Incremented to {}", state.0);
 
-                // Small delay to make output readable
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
                 if state.0 < state.1 {
                     // Send next increment message to self
                     let _ = server_ref

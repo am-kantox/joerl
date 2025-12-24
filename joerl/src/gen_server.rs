@@ -585,3 +585,87 @@ pub fn spawn<G: GenServer>(system: &Arc<ActorSystem>, server: G) -> GenServerRef
         _phantom: PhantomData,
     }
 }
+
+/// Spawn a GenServer and register it with a name.
+///
+/// Creates and starts a new GenServer actor, then registers it in the
+/// system registry with the given name. The server can then be looked up
+/// using `ActorSystem::whereis()`.
+///
+/// Returns an error if the name is already registered.
+///
+/// In Erlang: `gen_server:start_link({local, Name}, Module, Args, Opts)`
+///
+/// # Examples
+///
+/// ```rust
+/// use joerl::gen_server::{spawn_named, GenServer, GenServerContext, CallResponse};
+/// use joerl::ActorSystem;
+/// use async_trait::async_trait;
+/// use std::sync::Arc;
+///
+/// struct Counter;
+///
+/// #[derive(Debug)]
+/// enum CounterCall { Get }
+///
+/// #[derive(Debug)]
+/// enum CounterCast { Increment }
+///
+/// #[async_trait]
+/// impl GenServer for Counter {
+///     type State = i32;
+///     type Call = CounterCall;
+///     type Cast = CounterCast;
+///     type CallReply = i32;
+///
+///     async fn init(&mut self, _ctx: &mut GenServerContext<'_, Self>) -> Self::State {
+///         0
+///     }
+///
+///     async fn handle_call(
+///         &mut self,
+///         call: Self::Call,
+///         state: &mut Self::State,
+///         _ctx: &mut GenServerContext<'_, Self>,
+///     ) -> CallResponse<Self::CallReply> {
+///         CallResponse::Reply(*state)
+///     }
+///
+///     async fn handle_cast(
+///         &mut self,
+///         _cast: Self::Cast,
+///         state: &mut Self::State,
+///         _ctx: &mut GenServerContext<'_, Self>,
+///     ) {
+///         *state += 1;
+///     }
+/// }
+///
+/// # tokio_test::block_on(async {
+/// let system = Arc::new(ActorSystem::new());
+/// let counter = spawn_named(&system, Counter, "counter").unwrap();
+///
+/// // Look up by name
+/// let pid = system.whereis("counter").unwrap();
+/// assert_eq!(pid, counter.pid());
+/// # });
+/// ```
+pub fn spawn_named<G: GenServer>(
+    system: &Arc<ActorSystem>,
+    server: G,
+    name: impl Into<String>,
+) -> Result<GenServerRef<G>> {
+    let actor = GenServerActor::new(server);
+    let actor_ref = system.spawn(actor);
+    let pid = actor_ref.pid();
+
+    // Register the name
+    system.register(name, pid)?;
+
+    Ok(GenServerRef {
+        pid,
+        system: system.clone(),
+        _phantom: PhantomData,
+    })
+}
