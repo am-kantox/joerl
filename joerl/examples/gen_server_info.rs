@@ -13,7 +13,7 @@
 //! - Integrating with other messaging patterns
 
 use async_trait::async_trait;
-use joerl::gen_server::{spawn_named, CallResponse, GenServer, GenServerContext};
+use joerl::gen_server::{CallResponse, GenServer, GenServerContext, spawn_named};
 use joerl::{ActorSystem, ExitReason, Message};
 use std::sync::Arc;
 
