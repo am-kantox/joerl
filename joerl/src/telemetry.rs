@@ -1243,6 +1243,80 @@ pub fn init_prometheus(_addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Named process registry metrics.
+pub struct RegistryMetrics;
+
+impl RegistryMetrics {
+    /// Records a process registration.
+    #[inline]
+    pub fn process_registered() {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_registry_registrations_total").increment(1);
+            gauge!("joerl_registry_size").increment(1.0);
+        }
+    }
+
+    /// Records a process unregistration.
+    #[inline]
+    pub fn process_unregistered() {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_registry_unregistrations_total").increment(1);
+            gauge!("joerl_registry_size").decrement(1.0);
+        }
+    }
+
+    /// Records a registry lookup operation.
+    #[inline]
+    pub fn lookup_performed() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_registry_lookups_total").increment(1);
+    }
+
+    /// Records a registration conflict (name already taken).
+    #[inline]
+    pub fn registration_conflict() {
+        #[cfg(feature = "telemetry")]
+        counter!("joerl_registry_conflicts_total").increment(1);
+    }
+}
+
+/// Message scheduler metrics.
+pub struct SchedulerMetrics;
+
+impl SchedulerMetrics {
+    /// Records a scheduled message.
+    #[inline]
+    pub fn message_scheduled() {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_scheduled_messages_total").increment(1);
+            gauge!("joerl_scheduled_messages_active").increment(1.0);
+        }
+    }
+
+    /// Records a timer cancellation.
+    #[inline]
+    pub fn timer_cancelled() {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_scheduled_messages_cancelled_total").increment(1);
+            gauge!("joerl_scheduled_messages_active").decrement(1.0);
+        }
+    }
+
+    /// Records a scheduled message delivery.
+    #[inline]
+    pub fn message_delivered() {
+        #[cfg(feature = "telemetry")]
+        {
+            counter!("joerl_scheduled_messages_delivered_total").increment(1);
+            gauge!("joerl_scheduled_messages_active").decrement(1.0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -299,6 +299,80 @@ impl ActorContext {
         Err(crate::ActorError::SendFailed(to))
     }
 
+    /// Looks up a process by name.
+    ///
+    /// Returns the Pid if the name is registered, or None otherwise.
+    ///
+    /// In Erlang: `whereis(Name)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+    ///         if let Some(manager_pid) = ctx.whereis("manager") {
+    ///             ctx.send(manager_pid, Box::new("status")).await.ok();
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn whereis(&self, name: &str) -> Option<Pid> {
+        if let Some(system_weak) = &self.system
+            && let Some(system) = system_weak.upgrade()
+        {
+            return system.whereis(name);
+        }
+        None
+    }
+
+    /// Schedules a message to be sent after a delay.
+    ///
+    /// Returns a TimerRef that can be used to cancel the timer.
+    ///
+    /// In Erlang: `erlang:send_after(Time, Dest, Message)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{Actor, ActorContext, Message};
+    /// use joerl::scheduler::Destination;
+    /// use async_trait::async_trait;
+    /// use std::time::Duration;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+    ///         // Schedule a reminder to ourselves
+    ///         ctx.send_after(
+    ///             Destination::Pid(ctx.pid()),
+    ///             Box::new("reminder"),
+    ///             Duration::from_secs(5)
+    ///         );
+    ///     }
+    /// }
+    /// ```
+    pub fn send_after(
+        &self,
+        dest: crate::scheduler::Destination,
+        msg: Message,
+        duration: std::time::Duration,
+    ) -> Option<crate::scheduler::TimerRef> {
+        if let Some(system_weak) = &self.system
+            && let Some(system) = system_weak.upgrade()
+        {
+            return Some(system.send_after(dest, msg, duration));
+        }
+        None
+    }
+
     /// Selectively receive a message matching the predicate.
     ///
     /// This is similar to Erlang's `receive` with pattern matching.

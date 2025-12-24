@@ -78,6 +78,22 @@ pub enum ActorError {
     #[error("Operation timed out")]
     Timeout,
 
+    /// Name is already registered to another process.
+    #[error("Name '{0}' is already registered")]
+    NameAlreadyRegistered(String),
+
+    /// Name is not registered.
+    #[error("Name '{0}' is not registered")]
+    NameNotRegistered(String),
+
+    /// Invalid process name.
+    #[error("Invalid name: {0}")]
+    InvalidName(String),
+
+    /// Timer not found or already cancelled.
+    #[error("Timer {0} not found")]
+    TimerNotFound(u64),
+
     /// Generic actor error.
     #[error("Actor error: {0}")]
     Other(String),

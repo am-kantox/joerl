@@ -11,6 +11,8 @@ use crate::actor::{Actor, ActorContext};
 use crate::error::{ActorError, Result};
 use crate::mailbox::{DEFAULT_MAILBOX_CAPACITY, Mailbox, MailboxSender};
 use crate::message::{Envelope, EnvelopeContent, ExitReason, Message, MonitorRef, Signal};
+use crate::registry::Registry;
+use crate::scheduler::{Destination, Scheduler};
 use crate::telemetry::{ActorMetrics, LinkMetrics, MessageMetrics, SignalMetrics};
 use dashmap::DashMap;
 use futures::FutureExt;
@@ -279,6 +281,11 @@ pub struct ActorSystem {
     actors: Arc<DashMap<Pid, ActorEntry>>,
     local_node_id: u32, // 0 for local-only, or node hash for distributed
 
+    // Named process registry
+    registry: Arc<Registry>,
+    // Message scheduler
+    scheduler: Arc<Scheduler>,
+
     // Distributed system fields (None for local-only systems)
     node_name: Option<String>,
     listen_address: Option<String>,
@@ -296,6 +303,8 @@ impl ActorSystem {
         Arc::new(Self {
             actors: Arc::new(DashMap::new()),
             local_node_id: 0,
+            registry: Arc::new(Registry::new()),
+            scheduler: Arc::new(Scheduler::new()),
             node_name: None,
             listen_address: None,
             epmd_client: None,
@@ -383,6 +392,8 @@ impl ActorSystem {
         let system = Arc::new(Self {
             actors: Arc::new(DashMap::new()),
             local_node_id: node_id,
+            registry: Arc::new(Registry::new()),
+            scheduler: Arc::new(Scheduler::new()),
             node_name: Some(node_name.clone()),
             listen_address: Some(listen_address.clone()),
             epmd_client: Some(epmd_client),
@@ -1035,6 +1046,224 @@ impl ActorSystem {
     }
 
     // ========================================================================
+    // Named Process Registry
+    // ========================================================================
+
+    /// Registers a process with a name.
+    ///
+    /// If the name is already registered, returns an error. If the Pid is
+    /// already registered under a different name, the old name is unregistered.
+    ///
+    /// In Erlang: `register(Name, Pid)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// let worker = system.spawn(Worker);
+    ///
+    /// system.register("worker1", worker.pid()).unwrap();
+    /// # });
+    /// ```
+    pub fn register(&self, name: impl Into<String>, pid: Pid) -> Result<()> {
+        self.registry.register(name, pid)
+    }
+
+    /// Unregisters a name from the registry.
+    ///
+    /// Returns the Pid that was associated with the name.
+    ///
+    /// In Erlang: `unregister(Name)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// let worker = system.spawn(Worker);
+    ///
+    /// system.register("worker1", worker.pid()).unwrap();
+    /// let pid = system.unregister("worker1").unwrap();
+    /// assert_eq!(pid, worker.pid());
+    /// # });
+    /// ```
+    pub fn unregister(&self, name: &str) -> Result<Pid> {
+        self.registry.unregister(name)
+    }
+
+    /// Looks up a process by name.
+    ///
+    /// Returns the Pid if the name is registered, or None otherwise.
+    ///
+    /// In Erlang: `whereis(Name)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// let worker = system.spawn(Worker);
+    ///
+    /// system.register("worker1", worker.pid()).unwrap();
+    /// let pid = system.whereis("worker1").unwrap();
+    /// assert_eq!(pid, worker.pid());
+    /// # });
+    /// ```
+    pub fn whereis(&self, name: &str) -> Option<Pid> {
+        self.registry.whereis(name)
+    }
+
+    /// Returns a list of all registered names.
+    ///
+    /// In Erlang: `registered()`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use async_trait::async_trait;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// let worker1 = system.spawn(Worker);
+    /// let worker2 = system.spawn(Worker);
+    ///
+    /// system.register("worker1", worker1.pid()).unwrap();
+    /// system.register("worker2", worker2.pid()).unwrap();
+    ///
+    /// let names = system.registered();
+    /// assert_eq!(names.len(), 2);
+    /// # });
+    /// ```
+    pub fn registered(&self) -> Vec<String> {
+        self.registry.registered()
+    }
+
+    // ========================================================================
+    // Message Scheduler
+    // ========================================================================
+
+    /// Schedules a message to be sent after a delay.
+    ///
+    /// Returns a TimerRef that can be used to cancel the timer.
+    ///
+    /// In Erlang: `erlang:send_after(Time, Dest, Message)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use joerl::scheduler::Destination;
+    /// use async_trait::async_trait;
+    /// use std::time::Duration;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// let worker = system.spawn(Worker);
+    ///
+    /// let timer_ref = system.send_after(
+    ///     Destination::Pid(worker.pid()),
+    ///     Box::new("delayed"),
+    ///     Duration::from_millis(100)
+    /// );
+    /// # });
+    /// ```
+    pub fn send_after(
+        self: &Arc<Self>,
+        dest: Destination,
+        msg: Message,
+        duration: Duration,
+    ) -> crate::scheduler::TimerRef {
+        self.scheduler
+            .send_after(Arc::clone(self), dest, msg, duration)
+    }
+
+    /// Cancels a scheduled timer.
+    ///
+    /// Returns true if the timer was cancelled, false if it had already fired.
+    ///
+    /// In Erlang: `erlang:cancel_timer(TimerRef)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::{ActorSystem, Actor, ActorContext, Message};
+    /// use joerl::scheduler::Destination;
+    /// use async_trait::async_trait;
+    /// use std::time::Duration;
+    ///
+    /// struct Worker;
+    ///
+    /// #[async_trait]
+    /// impl Actor for Worker {
+    ///     async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    /// }
+    ///
+    /// # tokio_test::block_on(async {
+    /// let system = ActorSystem::new();
+    /// let worker = system.spawn(Worker);
+    ///
+    /// let timer_ref = system.send_after(
+    ///     Destination::Pid(worker.pid()),
+    ///     Box::new("delayed"),
+    ///     Duration::from_secs(10)
+    /// );
+    ///
+    /// // Cancel before it fires
+    /// let cancelled = system.cancel_timer(timer_ref).unwrap();
+    /// assert!(cancelled);
+    /// # });
+    /// ```
+    pub fn cancel_timer(&self, timer_ref: crate::scheduler::TimerRef) -> Result<bool> {
+        self.scheduler.cancel_timer(timer_ref)
+    }
+
+    // ========================================================================
     // Erlang-style Helper Functions
     // ========================================================================
 
@@ -1297,6 +1526,9 @@ impl ActorSystem {
 
     /// Cleans up an actor after termination.
     async fn cleanup_actor(&self, pid: Pid, reason: &ExitReason) {
+        // Clean up name registry first
+        self.registry.cleanup_pid(pid);
+
         // Get actor type, spawn time, and remove from registry
         let (actor_type, links, monitors, spawn_time) =
             if let Some((_, entry)) = self.actors.remove(&pid) {

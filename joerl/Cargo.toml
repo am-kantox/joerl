@@ -13,6 +13,7 @@ categories = ["asynchronous", "concurrency"]
 
 [dependencies]
 tokio = { version = "1.48", features = ["full"] }
+tokio-util = "0.7"
 thiserror = "2.0"
 tracing = "0.1"
 async-trait = "0.1"

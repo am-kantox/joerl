@@ -278,6 +278,87 @@ The macro generates:
 - `TransitionResult` enum for transition outcomes
 - Boilerplate Actor implementation with validation
 
+### Named Processes
+
+Like Erlang, joerl supports registering actors with names for easy lookup:
+
+```rust
+let system = ActorSystem::new();
+let worker = system.spawn(Worker);
+
+// Register with a name
+system.register("my_worker", worker.pid()).unwrap();
+
+// Look up by name
+if let Some(pid) = system.whereis("my_worker") {
+    system.send(pid, Box::new("Hello")).await?;
+}
+
+// List all registered names
+let names = system.registered();
+
+// Unregister
+system.unregister("my_worker").unwrap();
+```
+
+Names are automatically cleaned up when actors terminate. Actors can look up names from within their context:
+
+```rust
+#[async_trait]
+impl Actor for MyActor {
+    async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+        if let Some(manager_pid) = ctx.whereis("manager") {
+            ctx.send(manager_pid, Box::new("status")).await.ok();
+        }
+    }
+}
+```
+
+### Scheduled Messaging
+
+joerl supports Erlang-style `send_after` for delayed message delivery:
+
+```rust
+use joerl::scheduler::Destination;
+use std::time::Duration;
+
+let system = ActorSystem::new();
+let actor = system.spawn(Worker);
+
+// Schedule a message to be sent after 5 seconds
+let timer_ref = system.send_after(
+    Destination::Pid(actor.pid()),
+    Box::new("delayed message"),
+    Duration::from_secs(5)
+).await;
+
+// Cancel the timer if needed
+system.cancel_timer(timer_ref)?;
+
+// Schedule to a named process
+system.send_after(
+    Destination::Name("worker".to_string()),
+    Box::new("task"),
+    Duration::from_millis(100)
+).await;
+```
+
+Actors can schedule messages from within their context:
+
+```rust
+#[async_trait]
+impl Actor for MyActor {
+    async fn started(&mut self, ctx: &mut ActorContext) {
+        // Schedule a reminder to ourselves
+        ctx.send_after(
+            Destination::Pid(ctx.pid()),
+            Box::new("timeout"),
+            Duration::from_secs(10)
+        );
+    }
+}
+```
+
 ### Trapping Exits
 
 Actors can trap exit signals to handle failures gracefully:
@@ -301,6 +382,12 @@ impl Actor for MyActor {
 || Erlang | joerl | Description |
 |--------|-------|-------------|
 | `spawn/1` | `system.spawn(actor)` | Spawn a new actor |
+| `register(Name, Pid)` | `system.register(name, pid)` | Register a process with a name |
+| `unregister(Name)` | `system.unregister(name)` | Unregister a name |
+| `whereis(Name)` | `system.whereis(name)` | Look up a process by name |
+| `registered()` | `system.registered()` | List all registered names |
+| `erlang:send_after(Time, Dest, Msg)` | `system.send_after(dest, msg, duration)` | Schedule delayed message |
+| `erlang:cancel_timer(TRef)` | `system.cancel_timer(tref)` | Cancel a scheduled timer |
 | `gen_server:start_link/3` | `gen_server::spawn(&system, server)` | Spawn a gen_server |
 | `gen_server:call/2` | `server_ref.call(request)` | Synchronous call |
 | `gen_server:cast/2` | `server_ref.cast(message)` | Asynchronous cast |
@@ -325,6 +412,8 @@ See the [`examples/`](examples/) directory for more examples:
 - `ping_pong.rs` - Two actors communicating
 - `supervision_tree.rs` - Supervision tree example
 - `link_monitor.rs` - Links and monitors demonstration
+- `named_processes.rs` - Named process registry demonstration
+- `scheduled_messaging.rs` - Delayed message delivery with timers
 - **`panic_handling.rs` - Comprehensive panic handling demonstration (Erlang/OTP-style)**
 - **`telemetry_demo.rs` - Telemetry and metrics with Prometheus export**
 - `serialization_example.rs` - Trait-based message serialization
