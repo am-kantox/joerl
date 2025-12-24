@@ -519,6 +519,14 @@ impl<G: GenServer> Clone for GenServerRef<G> {
     }
 }
 
+impl<G: GenServer> std::fmt::Debug for GenServerRef<G> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenServerRef")
+            .field("pid", &self.pid)
+            .finish()
+    }
+}
+
 impl<G: GenServer> GenServerRef<G> {
     /// Get the server's Pid
     pub fn pid(&self) -> Pid {
