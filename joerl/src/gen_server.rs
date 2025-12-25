@@ -404,6 +404,155 @@ impl<'a, G: GenServer> GenServerContext<'a, G> {
             .take()
             .expect("reply_handle() called outside handle_call or already taken")
     }
+
+    /// Looks up a process by name.
+    ///
+    /// Returns the Pid if the name is registered, or None otherwise.
+    ///
+    /// In Erlang: `whereis(Name)`
+    pub fn whereis(&self, name: &str) -> Option<Pid> {
+        self.actor_ctx.whereis(name)
+    }
+
+    /// Schedules a message to be sent after a delay.
+    ///
+    /// Returns a TimerRef that can be used to cancel the timer.
+    ///
+    /// In Erlang: `erlang:send_after(Time, Dest, Message)`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::gen_server::{GenServer, GenServerContext, CallResponse};
+    /// use joerl::scheduler::Destination;
+    /// use joerl::Message;
+    /// use async_trait::async_trait;
+    /// use std::time::Duration;
+    ///
+    /// struct TimerServer;
+    ///
+    /// #[derive(Debug)]
+    /// enum Call { Start }
+    ///
+    /// #[derive(Debug)]
+    /// enum Cast {}
+    ///
+    /// #[async_trait]
+    /// impl GenServer for TimerServer {
+    ///     type State = u32;
+    ///     type Call = Call;
+    ///     type Cast = Cast;
+    ///     type CallReply = ();
+    ///
+    ///     async fn init(&mut self, _ctx: &mut GenServerContext<'_, Self>) -> Self::State {
+    ///         0
+    ///     }
+    ///
+    ///     async fn handle_call(
+    ///         &mut self,
+    ///         _call: Self::Call,
+    ///         _state: &mut Self::State,
+    ///         ctx: &mut GenServerContext<'_, Self>,
+    ///     ) -> CallResponse<Self::CallReply> {
+    ///         // Schedule a message to ourselves
+    ///         ctx.send_after(
+    ///             Destination::Pid(ctx.pid()),
+    ///             Box::new("tick"),
+    ///             Duration::from_secs(1)
+    ///         );
+    ///         CallResponse::Reply(())
+    ///     }
+    ///
+    ///     async fn handle_cast(&mut self, _cast: Self::Cast, _state: &mut Self::State, _ctx: &mut GenServerContext<'_, Self>) {}
+    /// }
+    /// ```
+    pub fn send_after(
+        &self,
+        dest: crate::scheduler::Destination,
+        msg: Message,
+        duration: std::time::Duration,
+    ) -> Option<crate::scheduler::TimerRef> {
+        self.actor_ctx.send_after(dest, msg, duration)
+    }
+
+    /// Schedules an info message to be sent to this GenServer after a delay.
+    ///
+    /// This is a convenience wrapper that properly wraps the message in `GenServerMsg::Info`
+    /// so it will be delivered to `handle_info()`. Use this instead of `send_after()` when
+    /// scheduling messages to GenServers.
+    ///
+    /// Returns a TimerRef that can be used to cancel the timer.
+    ///
+    /// In Erlang: `erlang:send_after(Time, self(), Message)` for info messages
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use joerl::gen_server::{GenServer, GenServerContext, CallResponse};
+    /// use joerl::Message;
+    /// use async_trait::async_trait;
+    /// use std::time::Duration;
+    ///
+    /// struct TickerServer;
+    ///
+    /// #[derive(Debug)]
+    /// enum Call { Start }
+    ///
+    /// #[derive(Debug)]
+    /// enum Cast {}
+    ///
+    /// #[async_trait]
+    /// impl GenServer for TickerServer {
+    ///     type State = u32;
+    ///     type Call = Call;
+    ///     type Cast = Cast;
+    ///     type CallReply = ();
+    ///
+    ///     async fn init(&mut self, _ctx: &mut GenServerContext<'_, Self>) -> Self::State {
+    ///         0
+    ///     }
+    ///
+    ///     async fn handle_call(
+    ///         &mut self,
+    ///         _call: Self::Call,
+    ///         _state: &mut Self::State,
+    ///         ctx: &mut GenServerContext<'_, Self>,
+    ///     ) -> CallResponse<Self::CallReply> {
+    ///         // Schedule an info message to ourselves
+    ///         ctx.send_info_after(
+    ///             Box::new("tick"),
+    ///             Duration::from_secs(1)
+    ///         );
+    ///         CallResponse::Reply(())
+    ///     }
+    ///
+    ///     async fn handle_cast(&mut self, _cast: Self::Cast, _state: &mut Self::State, _ctx: &mut GenServerContext<'_, Self>) {}
+    ///
+    ///     async fn handle_info(
+    ///         &mut self,
+    ///         msg: Message,
+    ///         state: &mut Self::State,
+    ///         _ctx: &mut GenServerContext<'_, Self>,
+    ///     ) {
+    ///         if let Some(_tick) = msg.downcast_ref::<&str>() {
+    ///             *state += 1;
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn send_info_after(
+        &self,
+        msg: Message,
+        duration: std::time::Duration,
+    ) -> Option<crate::scheduler::TimerRef> {
+        // Wrap the message in GenServerMsg::Info so handle_info will receive it
+        let info_msg: GenServerMsg<G> = GenServerMsg::Info { message: msg };
+        self.actor_ctx.send_after(
+            crate::scheduler::Destination::Pid(self.pid()),
+            Box::new(info_msg),
+            duration,
+        )
+    }
 }
 
 /// Internal message types for GenServer
