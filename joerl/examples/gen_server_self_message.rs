@@ -11,7 +11,7 @@
 //! - Work queues that process items sequentially
 
 use async_trait::async_trait;
-use joerl::gen_server::{spawn, CallResponse, GenServer, GenServerContext, GenServerRef};
+use joerl::gen_server::{CallResponse, GenServer, GenServerContext, GenServerRef, spawn};
 use joerl::{ActorSystem, ExitReason, Message};
 use std::sync::Arc;
 use std::time::Duration;
@@ -145,10 +145,7 @@ impl GenServer for Ticker {
             TickerCall::Start => {
                 println!("[Ticker] Starting periodic ticker");
                 // Schedule first tick to ourselves after 100ms using send_info_after
-                let timer_ref = ctx.send_info_after(
-                    Box::new("tick"),
-                    Duration::from_millis(100),
-                );
+                let timer_ref = ctx.send_info_after(Box::new("tick"), Duration::from_millis(100));
                 println!("[Ticker] Scheduled timer: {:?}", timer_ref);
                 CallResponse::Reply(state.0)
             }
