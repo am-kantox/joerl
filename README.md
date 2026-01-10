@@ -379,7 +379,7 @@ impl Actor for MyActor {
 ```
 
 ## Erlang Terminology Mapping
-```
+
 || Erlang | joerl | Description |
 |--------|-------|-------------|
 | `spawn/1` | `system.spawn(actor)` | Spawn a new actor |
@@ -400,7 +400,6 @@ impl Actor for MyActor {
 | `process_flag(trap_exit, true)` | `ctx.trap_exit(true)` | Trap exit signals |
 | `{'EXIT', Pid, Reason}` | `Signal::Exit { from, reason }` | Exit signal |
 | `{'DOWN', Ref, process, Pid, Reason}` | `Signal::Down { reference, pid, reason }` | Down signal |
-```
 
 ## Examples
 
