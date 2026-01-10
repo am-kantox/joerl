@@ -380,7 +380,7 @@ impl Actor for MyActor {
 
 ## Erlang Terminology Mapping
 
-|| Erlang | joerl | Description |
+| Erlang | joerl | Description |
 |--------|-------|-------------|
 | `spawn/1` | `system.spawn(actor)` | Spawn a new actor |
 | `register(Name, Pid)` | `system.register(name, pid)` | Register a process with a name |
