@@ -8,16 +8,16 @@ An Erlang-inspired actor model library for Rust, named in tribute to [Joe Armstr
 
 ## Features
 
-- 🎭 **Actor Model**: Lightweight actors that communicate via message passing
-- 🤖 **GenServer**: Erlang's gen_server behavior with call/cast semantics
-- 🔄 **GenStatem DSL**: Mermaid-based state machine definition with compile-time validation
-- 🌳 **Supervision Trees**: Robust error handling with configurable restart strategies  
-- 🔗 **Links & Monitors**: Actor relationships for failure detection and propagation
-- 📬 **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
-- 🌐 **Distributed Messaging**: Full location-transparent remote messaging with EPMD discovery
-- ⚡ **Async/Await**: Built on tokio for excellent performance
-- 📊 **Telemetry & Observability**: Comprehensive metrics and tracing with Prometheus/OpenTelemetry support
-- 🦀 **Erlang Conventions**: Familiar API for Erlang/OTP developers
+- **Actor Model**: Lightweight actors that communicate via message passing
+- **GenServer**: Erlang's gen_server behavior with call/cast semantics
+- **GenStatem DSL**: Mermaid-based state machine definition with compile-time validation
+- **Supervision Trees**: Robust error handling with configurable restart strategies  
+- **Links & Monitors**: Actor relationships for failure detection and propagation
+- **Bounded Mailboxes**: Backpressure support to prevent resource exhaustion
+- **Distributed Messaging**: Full location-transparent remote messaging with EPMD discovery
+- **Async/Await**: Built on tokio for excellent performance
+- **Telemetry & Observability**: Comprehensive metrics and tracing with Prometheus/OpenTelemetry support
+- **Erlang Conventions**: Familiar API for Erlang/OTP developers
 
 ## Installation
 
@@ -379,6 +379,7 @@ impl Actor for MyActor {
 ```
 
 ## Erlang Terminology Mapping
+```
 || Erlang | joerl | Description |
 |--------|-------|-------------|
 | `spawn/1` | `system.spawn(actor)` | Spawn a new actor |
@@ -399,6 +400,7 @@ impl Actor for MyActor {
 | `process_flag(trap_exit, true)` | `ctx.trap_exit(true)` | Trap exit signals |
 | `{'EXIT', Pid, Reason}` | `Signal::Exit { from, reason }` | Exit signal |
 | `{'DOWN', Ref, process, Pid, Reason}` | `Signal::Down { reference, pid, reason }` | Down signal |
+```
 
 ## Examples
 
@@ -529,7 +531,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `joerl_supervisor_restarts_total` - Supervisor restart events
 - And more...
 
-See [TELEMETRY.md](TELEMETRY.md) for comprehensive documentation and integration examples with Prometheus, Grafana, OpenTelemetry, and Datadog.
+See [Telemetry](TELEMETRY.md) for comprehensive documentation and integration examples with Prometheus, Grafana, OpenTelemetry, and Datadog.
 
 ## Architecture
 

@@ -6,22 +6,22 @@ This document explains the distributed actor system examples in joerl and how th
 
 Erlang/OTP has built-in support for distributed computing where actors (processes) can transparently communicate across different nodes in a cluster. **joerl now includes EPMD (Erlang Port Mapper Daemon) support for node discovery and the foundation for location-transparent distributed computing!**
 
-### ✅ What's Implemented
+### ✓ What's Implemented
 
 - **EPMD Server**: Standalone port mapper daemon for node registry (port 4369)
 - **EPMD Client**: Library for node registration, discovery, and keep-alive
-- **Unified ActorSystem**: Same API for local and distributed systems - true location transparency! ✨
+- **Unified ActorSystem**: Same API for local and distributed systems—true location transparency!
 - **Remote Messaging**: Full location-transparent message passing between nodes
 - **Message Serialization**: Global registry with trait-based serialization
 - **TCP Transport**: Node-to-node connection management with bidirectional handshake
-- **Ping/Pong RPC**: Remote process liveness checking (erlang:is_process_alive/1)
+- **Ping/Pong RPC**: Remote process liveness checking (`erlang:is_process_alive/1`)
 - **Production-Ready Examples**: Working multi-node cluster demonstrations
 
-See [CLUSTERING.md](./CLUSTERING.md) for complete documentation and [QUICKSTART_CLUSTERING.md](./QUICKSTART_CLUSTERING.md) for getting started.
+See [Clustering](./CLUSTERING.md) for complete documentation and [Clustering (Quickstart)](./QUICKSTART_CLUSTERING.md) for getting started.
 
-## Remote Messaging ✨ NEW
+## Remote Messaging
 
-joerl now supports full remote messaging between distributed nodes with location transparency!
+`joerl` supports full remote messaging between distributed nodes with location transparency!
 
 ### Key Features
 
@@ -141,11 +141,11 @@ cargo run --example distributed_system_example -- node_b 5002
 # Nodes automatically discover each other!
 ```
 
-See [CLUSTERING.md](./CLUSTERING.md) for detailed usage.
+See [Clustering](./CLUSTERING.md) for detailed usage.
 
 ## Examples
 
-### 1. `epmd_server.rs` - Standalone EPMD Server ✨ NEW
+### 1. `epmd_server.rs` - Standalone EPMD Server
 
 A production-ready EPMD (Erlang Port Mapper Daemon) server for node discovery.
 
@@ -160,15 +160,15 @@ A production-ready EPMD (Erlang Port Mapper Daemon) server for node discovery.
 **Architecture:**
 
 ```
-┌──────────────────────┐
-│   EPMD Server        │
-│   Port 4369          │
-│                      │
-│  Node Registry:      │
-│  - node_a:5001      │
-│  - node_b:5002      │
-│  - node_c:5003      │
-└──────┬───────────────┘
+┌───────────────────┐
+│   EPMD Server     │
+│   Port 4369       │
+│                   │
+│  Node Registry:   │
+│  - node_a:5001    │
+│  - node_b:5002    │
+│  - node_c:5003    │
+└──────┬────────────┘
        │
   ┌────┴─────┐
   │   TCP    │
@@ -197,7 +197,7 @@ cargo run --example epmd_server
 cargo run --example epmd_server -- 0.0.0.0:4369
 ```
 
-### 2. `distributed_system_example.rs` - Unified ActorSystem API ✨ NEW
+### 2. `distributed_system_example.rs` - Unified ActorSystem API
 
 Demonstrates the unified `ActorSystem` API with true location transparency.
 
@@ -252,7 +252,7 @@ cargo run --example distributed_system_example -- node_a 5001
 cargo run --example distributed_system_example -- node_b 5002
 ```
 
-### 3. `distributed_cluster.rs` - Multi-Node Cluster ✨ NEW
+### 3. `distributed_cluster.rs` - Multi-Node Cluster
 
 Complete example of a multi-node cluster with EPMD discovery.
 
@@ -331,10 +331,10 @@ This example implements a distributed chat system using TCP networking, demonstr
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                    Connection Registry                    │
-│         (Maps node names to network connections)          │
-└────────────┬─────────────────────────────┬───────────────┘
-             │                             │
+│                    Connection Registry                   │
+│         (Maps node names to network connections)         │
+└────────────┬────────────────────────────┬────────────────┘
+             │                            │
       ┌──────▼──────┐              ┌──────▼──────┐
       │   Node A    │              │   Node B    │
       │  Port 8001  │◄────TCP─────►│  Port 8002  │
@@ -381,9 +381,9 @@ RemotePid = spawn('node@hostname', module, function, [Args]).
 link(RemotePid).
 ```
 
-### In joerl (Unified ActorSystem)
+### In `joerl` (Unified ActorSystem)
 
-Distribution is now transparent - SAME API as Erlang!
+Distribution is now transparent—**same API** as Erlang!
 
 ```rust
 // Send to remote actor - exactly like sending locally!
@@ -412,13 +412,13 @@ The distributed system follows a layered architecture:
 
 ```
 ┌────────────────────────────────────────┐
-│  Application Layer (Your Actors)      │
+│  Application Layer (Your Actors)       │
 ├────────────────────────────────────────┤
-│  ActorSystem (Unified Local/Remote)  │
+│  ActorSystem (Unified Local/Remote)    │
 ├────────────────────────────────────────┤
-│  EPMD Client/Server (Discovery)       │
+│  EPMD Client/Server (Discovery)        │
 ├────────────────────────────────────────┤
-│  TCP Transport (Node-to-Node)         │
+│  TCP Transport (Node-to-Node)          │
 └────────────────────────────────────────┘
 ```
 
@@ -504,7 +504,7 @@ register_message_type("app::MyMessage", Box::new(deserialize_my_message));
 **Alternative approaches:**
 - Use the provided `impl_serializable!` macro for simple cases
 - Implement custom serialization formats per message type
-- See [SERIALIZATION.md](./SERIALIZATION.md) for detailed documentation
+- See [Serialization](./SERIALIZATION.md) for detailed documentation
 
 ### 2. Additional Features You Can Add
 
@@ -523,25 +523,20 @@ register_message_type("app::MyMessage", Box::new(deserialize_my_message));
 
 ## Current Implementation Status
 
-### ✅ Fully Implemented
-
-- **EPMD Server**: Complete standalone server with node registry
-- **EPMD Client**: Registration, lookup, keep-alive
-- **ActorSystem::new_distributed()**: Unified API for distributed actors (replaces deprecated DistributedSystem)
-- **Node Discovery**: Automatic peer discovery via EPMD
-- **Connection Management**: TCP transport with auto-reconnect
-- **Pid Serialization**: Pids with node support
-- **Keep-Alive Protocol**: Automatic dead node removal
-- **Remote Messaging**: Full trait-based serialization with global registry
-- **Message Routing**: Location-transparent message passing
-- **Production Examples**: Working multi-node demonstrations with remote messaging
-
-### 🔮 Future Enhancements
-
-- **Global Registry**: Cluster-wide name → Pid mapping
-- **Remote Links/Monitors**: Distributed supervision
-- **TLS Support**: Encrypted node-to-node communication
-- **Alternative Discovery**: DNS, multicast, Consul, etcd
+- [x] **EPMD Server**: Complete standalone server with node registry
+- [x] **EPMD Client**: Registration, lookup, keep-alive
+- [x] **ActorSystem::new_distributed()**: Unified API for distributed actors (replaces deprecated DistributedSystem)
+- [x] **Node Discovery**: Automatic peer discovery via EPMD
+- [x] **Connection Management**: TCP transport with auto-reconnect
+- [x] **Pid Serialization**: Pids with node support
+- [x] **Keep-Alive Protocol**: Automatic dead node removal
+- [x] **Remote Messaging**: Full trait-based serialization with global registry
+- [x] **Message Routing**: Location-transparent message passing
+- [x] **Production Examples**: Working multi-node demonstrations with remote messaging
+- [ ] **Global Registry**: Cluster-wide name → Pid mapping
+- [ ] **Remote Links/Monitors**: Distributed supervision
+- [ ] **TLS Support**: Encrypted node-to-node communication
+- [ ] **Alternative Discovery**: DNS, multicast, Consul, etcd
 
 ## Example: Using Unified ActorSystem
 
@@ -597,12 +592,6 @@ When building a distributed system:
 4. **Input Validation**: Carefully validate all incoming messages
 5. **DoS Protection**: Rate limit message processing and connections
 
-## Documentation
-
-- **[CLUSTERING.md](./CLUSTERING.md)** - Complete clustering guide with architecture, API reference, best practices
-- **[QUICKSTART_CLUSTERING.md](./QUICKSTART_CLUSTERING.md)** - 5-minute getting started tutorial
-- **[IMPLEMENTATION_SUMMARY.md](./IMPLEMENTATION_SUMMARY.md)** - Technical implementation details and design decisions
-
 ## Further Reading
 
 - [Erlang Distribution Protocol](https://www.erlang.org/doc/apps/erts/erl_dist_protocol.html)
@@ -614,7 +603,7 @@ When building a distributed system:
 
 ## Contributing
 
-The distributed clustering foundation is now in place! Contributions welcome for:
+Contributions welcome for:
 
 - Advanced remote messaging patterns
 - Alternative discovery mechanisms (DNS, multicast, Consul)
