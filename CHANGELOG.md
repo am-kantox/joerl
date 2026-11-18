@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-18
+
+### Fixed
+
+- Repaired supervision leaks and added regression coverage for supervisor behavior.
+- Corrected remote process liveness checks and distributed connection handling.
+- Fixed GenServer calls that could hang.
+- Improved selective receive behavior and added regression tests.
+
+### Changed
+
+- Updated actor-system, health-monitoring, scheduler, and serialization internals.
+- Improved Mermaid state-machine validation.
+- Clarified Erlang terminology, API documentation, and examples.
+- Released `joerl` and `joerl_macro` together at version `0.8.0`.
+
 ## [0.6.0] - 2025-12-10
 
 ### Added
@@ -91,5 +107,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For earlier version history, see the git commit log.
 
+[0.8.0]: https://github.com/am-kantox/joerl/compare/v0.7.1...v0.8.0
 [0.6.0]: https://github.com/am-kantox/joerl/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/am-kantox/joerl/compare/v0.4.0...v0.5.0
