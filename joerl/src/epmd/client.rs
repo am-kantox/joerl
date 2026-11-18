@@ -4,7 +4,7 @@
 
 use super::{EpmdError, EpmdMessage, NodeInfo, NodeMetadata, Result};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tokio::time;
@@ -212,22 +212,20 @@ impl EpmdClient {
         }
 
         // Read response
-        let mut len_buf = [0u8; 4];
-        if let Err(e) = stream.read_exact(&mut len_buf).await {
-            warn!("Failed to read response length: {}", e);
-            *connection_guard = None;
-            return Err(e.into());
-        }
-
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut response_buf = vec![0u8; len];
-
-        if let Err(e) = stream.read_exact(&mut response_buf).await {
-            warn!("Failed to read response: {}", e);
-            *connection_guard = None;
-            return Err(e.into());
-        }
-
+        let response_buf = match crate::serialization::read_frame(stream, 1024 * 1024).await {
+            Ok(Some(buf)) => buf,
+            Ok(None) => {
+                *connection_guard = None;
+                return Err(EpmdError::ProtocolError(
+                    "EPMD closed the connection".to_string(),
+                ));
+            }
+            Err(e) => {
+                warn!("Failed to read response: {}", e);
+                *connection_guard = None;
+                return Err(e.into());
+            }
+        };
         EpmdMessage::from_bytes(&response_buf)
     }
 }

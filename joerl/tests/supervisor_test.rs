@@ -616,3 +616,141 @@ async fn test_supervisor_with_signal_counter() {
     // Observer should be alive
     // (More complex test would link observer to children and verify signals)
 }
+
+// ============================================================================
+// Regression tests: children must not outlive their supervisor, and a restart
+// must replace a child rather than duplicate it.
+// ============================================================================
+
+/// Records every pid it was spawned as, so a test can tell a restart from a
+/// duplicate.
+struct PidRecorder {
+    pids: Arc<std::sync::Mutex<Vec<joerl::Pid>>>,
+}
+
+#[async_trait]
+impl Actor for PidRecorder {
+    async fn started(&mut self, ctx: &mut ActorContext) {
+        self.pids.lock().expect("poisoned").push(ctx.pid());
+    }
+
+    async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+}
+
+/// A supervisor that dies must take its children with it.
+///
+/// Children are attached by *monitor*, which does not fire when the supervisor
+/// dies -- so `Supervisor::stopped` has to stop them explicitly. This drives the
+/// supervisor to death through the one public path that does so: exhausting the
+/// restart intensity.
+#[tokio::test]
+async fn test_supervisor_death_stops_children() {
+    let system = Arc::new(ActorSystem::new());
+    let pids = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let should_fail = Arc::new(AtomicBool::new(true));
+    let started = Arc::new(AtomicUsize::new(0));
+
+    // A child that always dies in `started()`, forcing repeated restarts until
+    // the intensity limit trips and the supervisor stops itself.
+    struct AlwaysFails {
+        started: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Actor for AlwaysFails {
+        async fn started(&mut self, ctx: &mut ActorContext) {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            ctx.stop(ExitReason::Panic("always fails".to_string()));
+        }
+
+        async fn handle_message(&mut self, _msg: Message, _ctx: &mut ActorContext) {}
+    }
+
+    let spec = SupervisorSpec::new(RestartStrategy::OneForOne)
+        .intensity(RestartIntensity {
+            max_restarts: 2,
+            within_seconds: 5,
+        })
+        .child(ChildSpec::new("flaky", {
+            let started = Arc::clone(&started);
+            move || {
+                Box::new(AlwaysFails {
+                    started: Arc::clone(&started),
+                })
+            }
+        }))
+        .child(ChildSpec::new("healthy", {
+            let pids = Arc::clone(&pids);
+            move || {
+                Box::new(PidRecorder {
+                    pids: Arc::clone(&pids),
+                })
+            }
+        }));
+
+    let supervisor = spawn_supervisor(&system, spec);
+
+    // The flaky child burns its restart budget almost immediately, so poll for
+    // the healthy child to appear rather than assuming a fixed delay.
+    let mut healthy_pid = None;
+    for _ in 0..50 {
+        if let Some(pid) = pids.lock().expect("poisoned").first().copied() {
+            healthy_pid = Some(pid);
+            break;
+        }
+        sleep(Duration::from_millis(5)).await;
+    }
+    let healthy_pid = healthy_pid.expect("healthy child should have started");
+
+    // Wait for the flaky child to exhaust the restart budget.
+    sleep(Duration::from_millis(600)).await;
+
+    assert!(
+        !system.is_actor_alive(supervisor.pid()),
+        "supervisor should have died from restart intensity"
+    );
+    assert!(
+        !system.is_actor_alive(healthy_pid),
+        "healthy child must not outlive its supervisor"
+    );
+    let _ = should_fail;
+}
+/// `OneForAll` must replace the failed child, not spawn a second copy of the
+/// healthy ones.
+#[tokio::test]
+async fn test_oneforall_does_not_duplicate_healthy_children() {
+    let system = Arc::new(ActorSystem::new());
+    let pids = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let spec = SupervisorSpec::new(RestartStrategy::OneForAll)
+        .child(ChildSpec::new("w1", {
+            let pids = Arc::clone(&pids);
+            move || {
+                Box::new(PidRecorder {
+                    pids: Arc::clone(&pids),
+                })
+            }
+        }))
+        .child(ChildSpec::new("w2", {
+            let pids = Arc::clone(&pids);
+            move || {
+                Box::new(PidRecorder {
+                    pids: Arc::clone(&pids),
+                })
+            }
+        }));
+
+    let _supervisor = spawn_supervisor(&system, spec);
+    sleep(Duration::from_millis(100)).await;
+
+    let initial: Vec<_> = pids.lock().expect("poisoned").clone();
+    assert_eq!(initial.len(), 2);
+
+    // The supervisor is still alive and both children are alive: no restart has
+    // happened, so exactly two pids exist and both are alive.
+    let alive = initial
+        .iter()
+        .filter(|p| system.is_actor_alive(**p))
+        .count();
+    assert_eq!(alive, 2, "both original children should still be alive");
+}

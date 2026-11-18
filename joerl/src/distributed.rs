@@ -46,7 +46,9 @@
 //! **Note**: `DistributedSystem` is deprecated. Use `ActorSystem::new_distributed()` instead.
 
 use crate::epmd::{EpmdClient, NodeInfo};
-use crate::serialization::{SerializableEnvelope, SerializableMessage, get_global_registry};
+use crate::serialization::{
+    MAX_FRAME_BYTES, SerializableEnvelope, SerializableMessage, get_global_registry, read_frame,
+};
 use crate::telemetry::DistributedMetrics;
 use crate::{ActorSystem, Message, Pid};
 use dashmap::DashMap;
@@ -54,7 +56,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
@@ -271,6 +273,9 @@ pub struct NodeRegistry {
     connections_by_id: Arc<DashMap<u32, Arc<NodeConnection>>>,
     node_id_to_name: Arc<DashMap<u32, String>>,
     connection_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    /// Pending ping requests, keyed by the `reply_to` Pid sent in the request.
+    /// The `PongResponse` handler resolves the matching sender.
+    pending_pings: Arc<DashMap<Pid, tokio::sync::oneshot::Sender<bool>>>,
 }
 
 impl Default for NodeRegistry {
@@ -280,6 +285,7 @@ impl Default for NodeRegistry {
             connections_by_id: Arc::new(DashMap::new()),
             node_id_to_name: Arc::new(DashMap::new()),
             connection_locks: Arc::new(DashMap::new()),
+            pending_pings: Arc::new(DashMap::new()),
         }
     }
 }
@@ -289,6 +295,22 @@ impl NodeRegistry {
         Self::default()
     }
 
+    /// Registers a pending ping and returns the receiver for its result.
+    fn register_ping(&self, reply_to: Pid) -> tokio::sync::oneshot::Receiver<bool> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_pings.insert(reply_to, tx);
+        rx
+    }
+
+    /// Resolves a pending ping with the remote node's answer.
+    ///
+    /// Returns `true` if a waiter was present (i.e. this pong was expected).
+    fn resolve_ping(&self, reply_to: Pid, is_alive: bool) -> bool {
+        match self.pending_pings.remove(&reply_to) {
+            Some((_, tx)) => tx.send(is_alive).is_ok(),
+            None => false,
+        }
+    }
     /// Returns a list of all connected node names.
     pub fn list_connected_nodes(&self) -> Vec<String> {
         self.connections_by_name
@@ -650,38 +672,27 @@ impl DistributedSystem {
         }
     }
 
-    /// Handles messages from a connected node
+    /// Handles messages from a connected node.
+    ///
+    /// Kept only so the deprecated `DistributedSystem` listener can be spawned;
+    /// it drains and discards frames. `ActorSystem::new_distributed()` uses
+    /// `handle_connection` instead.
     async fn handle_node_connection(
         mut stream: TcpStream,
         _system: Arc<ActorSystem>,
     ) -> Result<()> {
         loop {
-            // Read message length
-            let mut len_buf = [0u8; 4];
-            match stream.read_exact(&mut len_buf).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            match read_frame(&mut stream, MAX_FRAME_BYTES).await {
+                Ok(Some(_frame)) => {
+                    // Deprecated path: frames are intentionally discarded.
+                    debug!("Discarding frame on deprecated DistributedSystem connection");
+                }
+                Ok(None) => {
                     debug!("Remote node disconnected");
                     return Ok(());
                 }
                 Err(e) => return Err(e.into()),
             }
-
-            let len = u32::from_be_bytes(len_buf) as usize;
-            if len > 10 * 1024 * 1024 {
-                // 10MB max
-                return Err(DistributedError::SerializationError(
-                    "Message too large".to_string(),
-                ));
-            }
-
-            // Read message
-            let mut msg_buf = vec![0u8; len];
-            stream.read_exact(&mut msg_buf).await?;
-
-            // Note: Old DistributedSystem is deprecated - use ActorSystem::new_distributed()
-            // This code path is no longer used
-            warn!("Using deprecated DistributedSystem message handling");
         }
     }
 
@@ -820,13 +831,10 @@ pub async fn connect_to_node(
 pub async fn ping_process(node_registry: &Arc<NodeRegistry>, pid: Pid) -> Result<bool> {
     use tokio::time::{Duration, timeout};
 
-    // Create a one-shot channel for the response
-    // Note: This is a simplified implementation. A production version would use
-    // a global response registry with request IDs.
-
-    // For now, send the ping and poll for a response
-    // We'll use a simple approach: send ping, then check after a small delay
-    let reply_to = Pid::new(); // Placeholder for sender identification
+    // The remote node echoes `reply_to` back in its PongResponse, which lets us
+    // correlate the answer with this specific request.
+    let reply_to = Pid::new();
+    let pong_rx = node_registry.register_ping(reply_to);
 
     let ping_msg = NetworkMessage::SystemRpc(SystemRpc::PingRequest {
         target: pid,
@@ -839,22 +847,19 @@ pub async fn ping_process(node_registry: &Arc<NodeRegistry>, pid: Pid) -> Result
     // Send ping request
     conn.send_message(&ping_msg).await?;
 
-    // Wait for response with timeout
-    // Note: In a full implementation, we'd register a handler and wait on a channel.
-    // For now, we'll use a simple delay and assume the ping succeeded if sent.
-    match timeout(
-        Duration::from_secs(5),
-        tokio::time::sleep(Duration::from_millis(100)),
-    )
-    .await
-    {
-        Ok(_) => {
-            // Ping was sent successfully
-            // In practice, we'd wait for actual pong response here
-            debug!("Ping sent to {} successfully", pid);
-            Ok(true)
+    // Wait for the *actual* pong, not merely for the write to succeed.
+    match timeout(Duration::from_secs(5), pong_rx).await {
+        Ok(Ok(is_alive)) => {
+            debug!("Ping to {} answered: alive={}", pid, is_alive);
+            Ok(is_alive)
+        }
+        Ok(Err(_)) => {
+            // Sender dropped without resolving - treat as unreachable.
+            debug!("Ping to {} was abandoned", pid);
+            Ok(false)
         }
         Err(_) => {
+            node_registry.pending_pings.remove(&reply_to);
             debug!("Ping to {} timed out", pid);
             Ok(false)
         }
@@ -935,29 +940,14 @@ async fn handle_node_connection(mut stream: TcpStream, system: Arc<ActorSystem>)
 
     // Process regular messages
     loop {
-        // Read message length
-        let mut len_buf = [0u8; 4];
-        match stream.read_exact(&mut len_buf).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+        let msg_buf = match read_frame(&mut stream, MAX_FRAME_BYTES).await {
+            Ok(Some(buf)) => buf,
+            Ok(None) => {
                 debug!("Remote node {} disconnected", handshake.node_name);
                 return Ok(());
             }
             Err(e) => return Err(e.into()),
-        }
-
-        let len = u32::from_be_bytes(len_buf) as usize;
-        if len > 10 * 1024 * 1024 {
-            // 10MB max
-            return Err(DistributedError::SerializationError(
-                "Message too large".to_string(),
-            ));
-        }
-
-        // Read message
-        let mut msg_buf = vec![0u8; len];
-        stream.read_exact(&mut msg_buf).await?;
-
+        };
         // Deserialize NetworkMessage
         let net_msg: NetworkMessage = bincode::deserialize(&msg_buf)
             .map_err(|e| DistributedError::SerializationError(e.to_string()))?;
@@ -988,21 +978,10 @@ async fn handle_node_connection(mut stream: TcpStream, system: Arc<ActorSystem>)
 
 /// Reads and deserializes a handshake message from the stream.
 async fn read_handshake(stream: &mut TcpStream) -> Result<HandshakeMessage> {
-    // Read message length
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await?;
-
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 1024 {
-        // Handshake should be small
-        return Err(DistributedError::SerializationError(
-            "Handshake too large".to_string(),
-        ));
-    }
-
-    // Read handshake
-    let mut handshake_buf = vec![0u8; len];
-    stream.read_exact(&mut handshake_buf).await?;
+    // A handshake is tiny; cap it well below a normal frame.
+    let handshake_buf = read_frame(stream, 1024).await?.ok_or_else(|| {
+        DistributedError::SerializationError("Connection closed before handshake".to_string())
+    })?;
 
     // Deserialize
     bincode::deserialize(&handshake_buf)
@@ -1032,8 +1011,13 @@ async fn handle_system_rpc(rpc: SystemRpc, system: &Arc<ActorSystem>) {
         }
         SystemRpc::PongResponse { target, is_alive } => {
             debug!("Received pong response for {}: alive={}", target, is_alive);
-            // Pong responses are handled by the waiting future in ping_process
-            // This is just for logging; the actual response is captured in ping_process
+            // `target` is the `reply_to` Pid we minted in ping_process; use it
+            // to wake the future that is waiting on this specific answer.
+            if let Some(registry) = system.node_registry()
+                && !registry.resolve_ping(target, is_alive)
+            {
+                debug!("Pong for {} had no waiting caller", target);
+            }
         }
     }
 }

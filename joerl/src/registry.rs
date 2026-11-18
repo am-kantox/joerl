@@ -101,7 +101,7 @@ impl Registry {
 
         // Validate name
         if name.is_empty() {
-            return Err(ActorError::InvalidName("Name cannot be empty".to_string()));
+            return Err(ActorError::InvalidName("name cannot be empty".to_string()));
         }
 
         // Check if this Pid is already registered under a different name

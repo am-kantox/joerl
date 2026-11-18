@@ -230,10 +230,15 @@ impl Scheduler {
                     };
 
                     if let Err(e) = result {
+                        // The caller cannot observe this: `send_after` already
+                        // returned a `TimerRef`. Log at warn level and let the
+                        // telemetry counters carry the signal.
                         tracing::warn!(
-                            "Failed to deliver scheduled message to {}: {}",
+                            "Failed to deliver scheduled message to {}: {} \
+                             (timer {} is now spent)",
                             dest,
-                            e
+                            e,
+                            timer_ref
                         );
                     }
 

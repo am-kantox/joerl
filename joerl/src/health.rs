@@ -42,14 +42,24 @@ pub struct HealthConfig {
     /// Minimum actor count (system unhealthy if below this)
     pub min_actors: usize,
     /// Maximum panic rate per second before unhealthy
+    ///
+    /// **Not yet enforced** — see `get_issues()`.
+    #[deprecated(note = "not yet enforced; tracked in TODO.md")]
     pub max_panic_rate: f64,
     /// Maximum restart rate per second before unhealthy
+    ///
+    /// **Not yet enforced** — see `get_issues()`.
+    #[deprecated(note = "not yet enforced; tracked in TODO.md")]
     pub max_restart_rate: f64,
     /// Maximum mailbox backpressure events per second
+    ///
+    /// **Not yet enforced** — see `get_issues()`.
+    #[deprecated(note = "not yet enforced; tracked in TODO.md")]
     pub max_backpressure_rate: f64,
 }
 
 impl Default for HealthConfig {
+    #[allow(deprecated)] // constructing the not-yet-enforced fields
     fn default() -> Self {
         Self {
             max_actors: 10_000,           // Alert if > 10K actors
@@ -155,7 +165,7 @@ impl SystemHealth {
 
         if self.config.max_actors > 0 && actor_count > self.config.max_actors {
             issues.push(HealthIssue {
-                severity: IssueSeverity::Warning,
+                severity: IssueSeverity::Critical,
                 description: format!("Too many actors: {}", actor_count),
                 current_value: actor_count as f64,
                 threshold: self.config.max_actors as f64,
@@ -239,9 +249,12 @@ mod tests {
 
         let health = SystemHealth::new(&system, config);
 
-        assert_eq!(health.get_status(), HealthStatus::Degraded);
+        // Exceeding max_actors is a liveness problem, not a cosmetic warning:
+        // it must be Critical so that `is_healthy()` actually fails.
+        assert_eq!(health.get_status(), HealthStatus::Unhealthy);
+        assert!(!health.is_healthy());
         assert_eq!(health.get_issues().len(), 1);
-        assert_eq!(health.get_issues()[0].severity, IssueSeverity::Warning);
+        assert_eq!(health.get_issues()[0].severity, IssueSeverity::Critical);
     }
 
     #[tokio::test]

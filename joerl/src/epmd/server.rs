@@ -2,11 +2,11 @@
 //!
 //! A standalone TCP server that maintains a registry of nodes in the cluster.
 
-use super::{EpmdError, EpmdMessage, NodeInfo, Result};
+use super::{EpmdMessage, NodeInfo, Result};
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time;
 use tracing::{debug, error, info, warn};
@@ -81,26 +81,15 @@ impl EpmdServer {
         nodes: Arc<DashMap<String, NodeEntry>>,
     ) -> Result<()> {
         loop {
-            // Read message length (4 bytes)
-            let mut len_buf = [0u8; 4];
-            match stream.read_exact(&mut len_buf).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            // Read one length-prefixed frame, bounded before allocation.
+            let msg_buf = match crate::serialization::read_frame(&mut stream, 1024 * 1024).await {
+                Ok(Some(buf)) => buf,
+                Ok(None) => {
                     // Client disconnected
                     return Ok(());
                 }
                 Err(e) => return Err(e.into()),
-            }
-
-            let len = u32::from_be_bytes(len_buf) as usize;
-            if len > 1024 * 1024 {
-                // 1MB max message size
-                return Err(EpmdError::ProtocolError("Message too large".to_string()));
-            }
-
-            // Read message body
-            let mut msg_buf = vec![0u8; len];
-            stream.read_exact(&mut msg_buf).await?;
+            };
 
             // Parse message
             let msg = EpmdMessage::from_bytes(&msg_buf)?;

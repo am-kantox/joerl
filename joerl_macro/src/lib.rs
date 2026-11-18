@@ -321,6 +321,11 @@ fn generate_gen_statem(input: &DeriveInput, fsm: &Fsm) -> syn::Result<proc_macro
                         }
                     }
                 } else {
+                    tracing::warn!(
+                        "{}: ignoring message that is not a {}Event",
+                        stringify!(#struct_name),
+                        stringify!(#struct_name)
+                    );
                     self.state = Some(state);
                     self.data = Some(data);
                 }

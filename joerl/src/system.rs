@@ -20,6 +20,7 @@ use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 // Distributed system imports (optional features)
@@ -226,9 +227,9 @@ impl ActorRef {
     /// ```
     pub async fn join(mut self) -> ExitReason {
         if let Some(handle) = self.join_handle.take() {
-            handle
-                .await
-                .unwrap_or(ExitReason::Panic("Actor task panicked".to_string()))
+            handle.await.unwrap_or_else(|e| {
+                ExitReason::Panic(format!("actor {} task failed: {}", self.pid, e))
+            })
         } else {
             ExitReason::Normal
         }
@@ -633,7 +634,10 @@ impl ActorSystem {
 
         // Telemetry: record actor spawn with type
         ActorMetrics::actor_spawned_typed(&actor_type_owned);
-
+        crate::telemetry::invoke_provider_actor_spawned(
+            &actor_type_owned,
+            &external_pid.to_string(),
+        );
         let system = Arc::clone(self);
         let actor_type_for_panic = actor_type_owned.clone();
         let join_handle = tokio::spawn(async move {
@@ -641,6 +645,15 @@ impl ActorSystem {
             let exit_reason = AssertUnwindSafe(async {
                 // Call started hook
                 actor.started(&mut ctx).await;
+
+                // An actor may stop itself from `started()` (a failed
+                // initialization). Honour that immediately instead of blocking
+                // in `recv()` forever waiting for a message that will never come.
+                if ctx.should_stop() {
+                    let exit_reason = ctx.stop_reason().cloned().unwrap_or(ExitReason::Normal);
+                    actor.stopped(&exit_reason, &mut ctx).await;
+                    return exit_reason;
+                }
 
                 // Main message loop
                 let exit_reason = loop {
@@ -656,6 +669,9 @@ impl ActorSystem {
                             match envelope.content {
                                 EnvelopeContent::Message(msg) => {
                                     let _span = MessageMetrics::message_processing_span();
+                                    crate::telemetry::invoke_provider_message_received(
+                                        &external_pid.to_string(),
+                                    );
                                     actor.handle_message(msg, &mut ctx).await;
                                     MessageMetrics::message_processed();
                                 }
@@ -720,6 +736,11 @@ impl ActorSystem {
                     panic_msg
                 );
                 ActorMetrics::actor_panicked_typed(&actor_type_for_panic);
+                crate::telemetry::invoke_provider_actor_panicked(
+                    &actor_type_for_panic,
+                    &external_pid.to_string(),
+                    &panic_msg,
+                );
                 ExitReason::Panic(panic_msg)
             });
 
@@ -765,22 +786,21 @@ impl ActorSystem {
                     .sender
                     .send(Envelope::message(msg))
                     .await
-                    .map_err(|_| ActorError::SendFailed(to))
+                    .map_err(|_| ActorError::ActorNotFound(to))
             } else {
                 Err(ActorError::ActorNotFound(to))
             };
 
             match &result {
-                Ok(_) => MessageMetrics::message_sent(),
-                Err(ActorError::SendFailed(_)) => {
-                    MessageMetrics::message_send_failed("mailbox_full")
+                Ok(_) => {
+                    MessageMetrics::message_sent();
+                    crate::telemetry::invoke_provider_message_sent("<system>", &to.to_string());
                 }
                 Err(ActorError::ActorNotFound(_)) => {
                     MessageMetrics::message_send_failed("actor_not_found")
                 }
                 _ => {}
             }
-
             result
         } else {
             // Remote message - forward via network
@@ -798,7 +818,9 @@ impl ActorSystem {
             } else {
                 // Not a distributed system, can't send remote messages
                 Err(ActorError::other(format!(
-                    "Cannot send to remote Pid {} - system is not distributed",
+                    "Cannot send to remote Pid {} - system is not distributed; \
+                     use ActorSystem::new_distributed() for remote actors, \
+                     or Pid::new() for local ones",
                     to
                 )))
             }
@@ -811,14 +833,20 @@ impl ActorSystem {
             entry
                 .sender
                 .try_send(Envelope::message(msg))
-                .map_err(|_| ActorError::SendFailed(to))
+                .map_err(|e| match e {
+                    mpsc::error::TrySendError::Full(_) => ActorError::MailboxFull(to),
+                    mpsc::error::TrySendError::Closed(_) => ActorError::ActorStopped(to),
+                })
         } else {
             Err(ActorError::ActorNotFound(to))
         };
 
         match &result {
             Ok(_) => MessageMetrics::message_sent(),
-            Err(ActorError::SendFailed(_)) => MessageMetrics::message_send_failed("mailbox_full"),
+            Err(ActorError::MailboxFull(_)) => MessageMetrics::message_send_failed("mailbox_full"),
+            Err(ActorError::ActorStopped(_)) => {
+                MessageMetrics::message_send_failed("actor_stopped")
+            }
             Err(ActorError::ActorNotFound(_)) => {
                 MessageMetrics::message_send_failed("actor_not_found")
             }
@@ -1366,7 +1394,10 @@ impl ActorSystem {
     /// Checks if a process (actor) is alive.
     ///
     /// For local Pids, checks the local registry.
-    /// For remote Pids, sends a ping/pong RPC request with a timeout.
+    ///
+    /// For remote Pids, sends a ping/pong RPC and waits up to 5 seconds for the
+    /// remote node's answer. A timeout, an unreachable node, or a negative
+    /// answer all yield `false`.
     ///
     /// Equivalent to Erlang's `erlang:is_process_alive/1`.
     ///
@@ -1529,22 +1560,22 @@ impl ActorSystem {
         // Clean up name registry first
         self.registry.cleanup_pid(pid);
 
-        // Get actor type, spawn time, and remove from registry
+        // Get actor type and relationships, and remove from registry.
         let (actor_type, links, monitors, spawn_time) =
             if let Some((_, entry)) = self.actors.remove(&pid) {
-                (
-                    entry.actor_type,
-                    entry.links,
-                    entry.monitors,
+                (entry.actor_type, entry.links, entry.monitors, {
                     #[cfg(feature = "telemetry")]
-                    entry.spawn_time,
+                    {
+                        Some(entry.spawn_time)
+                    }
                     #[cfg(not(feature = "telemetry"))]
-                    std::time::Instant::now(),
-                )
+                    {
+                        None::<std::time::Instant>
+                    }
+                })
             } else {
                 return;
             };
-
         // Telemetry: record actor stop with type
         let reason_str = match reason {
             ExitReason::Normal => "normal",
@@ -1554,13 +1585,16 @@ impl ActorSystem {
             ExitReason::Custom(_) => "custom",
         };
         ActorMetrics::actor_stopped_typed(&actor_type, reason_str);
+        crate::telemetry::invoke_provider_actor_stopped(&actor_type, &pid.to_string(), reason_str);
 
         // Telemetry: record actor lifetime
         #[cfg(feature = "telemetry")]
-        {
+        if let Some(spawn_time) = spawn_time {
             let lifetime = spawn_time.elapsed().as_secs_f64();
             ActorMetrics::actor_lifetime(&actor_type, lifetime);
         }
+        #[cfg(not(feature = "telemetry"))]
+        let _ = spawn_time;
 
         // Send EXIT signals to linked actors
         for linked_pid in links {

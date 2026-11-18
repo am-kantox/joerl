@@ -58,6 +58,45 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, RwLock};
 
+/// Maximum size of a single wire frame accepted by any joerl transport.
+///
+/// Every length-prefixed read goes through [`read_frame`], so this bound is
+/// enforced uniformly instead of being re-specified (and forgotten) per call
+/// site.
+pub const MAX_FRAME_BYTES: usize = 10 * 1024 * 1024;
+
+/// Reads one length-prefixed frame from `stream`.
+///
+/// The 4-byte big-endian prefix is validated against `max_bytes` *before* the
+/// buffer is allocated, so a hostile or buggy peer cannot force an oversized
+/// allocation.
+///
+/// Returns `Ok(None)` on a clean EOF (peer disconnected between frames), which
+/// callers should treat as end-of-stream rather than an error.
+pub async fn read_frame<R>(stream: &mut R, max_bytes: usize) -> std::io::Result<Option<Vec<u8>>>
+where
+    R: tokio::io::AsyncReadExt + Unpin,
+{
+    let mut len_buf = [0u8; 4];
+    match stream.read_exact(&mut len_buf).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e),
+    }
+
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame too large: {} bytes (max {})", len, max_bytes),
+        ));
+    }
+
+    let mut buf = vec![0u8; len];
+    stream.read_exact(&mut buf).await?;
+    Ok(Some(buf))
+}
+
 /// Errors that can occur during serialization or deserialization.
 #[derive(Debug, Clone)]
 pub enum SerializationError {
@@ -644,11 +683,51 @@ macro_rules! impl_serializable {
 mod tests {
     use super::*;
 
+    /// A frame whose prefix fits within the cap is returned intact.
+    #[tokio::test]
+    async fn test_read_frame_roundtrip() {
+        let payload = b"hello frame";
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        wire.extend_from_slice(payload);
+
+        let mut cursor = std::io::Cursor::new(wire);
+        let frame = read_frame(&mut cursor, MAX_FRAME_BYTES)
+            .await
+            .expect("read should succeed")
+            .expect("frame should be present");
+        assert_eq!(frame, payload);
+    }
+
+    /// A clean EOF between frames is `Ok(None)`, not an error.
+    #[tokio::test]
+    async fn test_read_frame_eof_is_none() {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        assert!(
+            read_frame(&mut cursor, MAX_FRAME_BYTES)
+                .await
+                .expect("eof is not an error")
+                .is_none()
+        );
+    }
+
+    /// An oversized prefix is rejected *before* the buffer is allocated.
+    #[tokio::test]
+    async fn test_read_frame_rejects_oversized_prefix() {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&u32::MAX.to_be_bytes());
+
+        let mut cursor = std::io::Cursor::new(wire);
+        let err = read_frame(&mut cursor, 1024)
+            .await
+            .expect_err("oversized frame must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
     #[derive(Debug, Clone, PartialEq)]
     struct TestMessage {
         value: u32,
     }
-
     impl SerializableMessage for TestMessage {
         fn message_type_id(&self) -> &'static str {
             "TestMessage"

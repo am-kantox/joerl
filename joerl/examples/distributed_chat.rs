@@ -466,23 +466,17 @@ async fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--node" => {
-                if i + 1 < args.len() {
-                    node_name = args[i + 1].clone();
-                    i += 1;
-                }
+            "--node" if i + 1 < args.len() => {
+                node_name = args[i + 1].clone();
+                i += 1;
             }
-            "--port" => {
-                if i + 1 < args.len() {
-                    port = args[i + 1].parse().unwrap_or(8001);
-                    i += 1;
-                }
+            "--port" if i + 1 < args.len() => {
+                port = args[i + 1].parse().unwrap_or(8001);
+                i += 1;
             }
-            "--connect" => {
-                if i + 1 < args.len() {
-                    connect_to = Some(args[i + 1].clone());
-                    i += 1;
-                }
+            "--connect" if i + 1 < args.len() => {
+                connect_to = Some(args[i + 1].clone());
+                i += 1;
             }
             _ => {}
         }

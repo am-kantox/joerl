@@ -140,8 +140,12 @@ impl Mailbox {
                     }
                 }
                 EnvelopeContent::Signal(_) => {
-                    // Signals always go to pending - they should be processed by handle_signal
-                    self.pending.lock().unwrap().push_back(envelope);
+                    // Signals must NOT be parked: an actor blocked in a
+                    // selective receive would never observe Stop/Kill/EXIT,
+                    // which is how supervisors shut actors down. Put it back
+                    // at the front and let the normal receive path dispatch it.
+                    self.pending.lock().unwrap().push_front(envelope);
+                    return None;
                 }
             }
         }

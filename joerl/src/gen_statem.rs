@@ -466,6 +466,10 @@ impl<G: GenStatem> Actor for GenStatemActor<G> {
             }
         } else {
             // Put state back if we couldn't process the message
+            tracing::warn!(
+                "{}: ignoring message that is not a StatemMsg",
+                self.fsm_type
+            );
             self.state = Some(state);
         }
     }

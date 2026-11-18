@@ -420,14 +420,19 @@ impl Supervisor {
     }
 
     /// Starts all children.
-    fn start_children(&mut self, mut specs: Vec<ChildSpec>, ctx: &mut ActorContext) {
+    ///
+    /// A child may terminate inside its own `started()` hook, before the
+    /// monitor below is registered -- `monitor` then returns `ActorNotFound`
+    /// and the DOWN signal is lost forever. Detect that case and restart the
+    /// child instead of silently dropping it.
+    async fn start_children(&mut self, mut specs: Vec<ChildSpec>, ctx: &mut ActorContext) {
         for mut spec in specs.drain(..) {
             let child_actor = (spec.start)();
             let actor_ref = self.system.spawn_boxed(child_actor);
             let pid = actor_ref.pid();
 
-            // Monitor the child
-            let _ = actor_ref.monitor(ctx.pid());
+            // Monitor the child. `Err` means it already died in `started()`.
+            let monitored = actor_ref.monitor(ctx.pid()).is_ok();
 
             let child = Child {
                 id: spec.id.clone(),
@@ -437,7 +442,20 @@ impl Supervisor {
             };
 
             self.children.insert(spec.id.clone(), child);
-            self.child_order.push(spec.id);
+            self.child_order.push(spec.id.clone());
+
+            if !monitored {
+                tracing::warn!(
+                    "Child {} ({}) exited during startup before it could be monitored; restarting",
+                    spec.id,
+                    pid
+                );
+                // Record the exit so restart intensity still applies.
+                if let Some(child) = self.children.get_mut(&spec.id) {
+                    child.restart_times.push(Instant::now());
+                }
+                self.restart_child(&spec.id, ctx).await;
+            }
         }
     }
 
@@ -502,15 +520,38 @@ impl Supervisor {
 
             child.restart_times.push(now);
 
+            // Terminate the previous incarnation before spawning a replacement.
+            // Without this, OneForAll/RestForOne would *duplicate* healthy
+            // children instead of restarting them.
+            let old_pid = child.pid;
+            if self.system.is_actor_alive(old_pid) {
+                let _ = self.system.send_signal(old_pid, Signal::Stop).await;
+            }
+
             // Spawn new child
             let child_actor = (child.start_factory)();
             let actor_ref = self.system.spawn_boxed(child_actor);
             let new_pid = actor_ref.pid();
 
-            // Monitor the new child
-            let _ = actor_ref.monitor(ctx.pid());
+            // Monitor the new child. A replacement that dies in its own
+            // `started()` cannot be monitored, so it would never produce a
+            // DOWN -- keep the restart budget honest by re-entering the
+            // restart path on the next tick instead of losing it.
+            let monitored = actor_ref.monitor(ctx.pid()).is_ok();
 
             child.pid = new_pid;
+
+            if !monitored {
+                tracing::warn!(
+                    "Restarted child {} ({}) exited during startup; retrying",
+                    child_id,
+                    new_pid
+                );
+                // Re-enter the restart path so the intensity budget is
+                // consumed and the supervisor eventually gives up.
+                Box::pin(self.restart_child(child_id, ctx)).await;
+                return;
+            }
 
             // Record restart telemetry
             let strategy_str = match self.strategy {
@@ -519,6 +560,7 @@ impl Supervisor {
                 RestartStrategy::RestForOne => "rest_for_one",
             };
             SupervisorMetrics::child_restarted(strategy_str);
+            crate::telemetry::invoke_provider_supervisor_restart(child_id, strategy_str);
 
             tracing::info!("Restarted child {} with new pid {}", child_id, new_pid);
         }
@@ -553,7 +595,7 @@ impl Actor for Supervisor {
 
         // Start all children
         if let Some(specs) = self.child_specs.take() {
-            self.start_children(specs, ctx);
+            self.start_children(specs, ctx).await;
         }
     }
 
@@ -581,8 +623,20 @@ impl Actor for Supervisor {
 
     async fn stopped(&mut self, _reason: &ExitReason, ctx: &mut ActorContext) {
         tracing::info!("Supervisor {} stopping, terminating children", ctx.pid());
-        // Children will be cleaned up automatically when the system detects
-        // the supervisor has stopped
+
+        // Children are attached via *monitors*, which notify us when a child
+        // dies -- they do not notify the child when *we* die. So we must
+        // explicitly stop every child, otherwise they are orphaned.
+        //
+        // Collect first: holding a borrow into `self.children` across an
+        // `await` would make this future non-`Send` (`Child` holds a
+        // `Box<dyn FnMut()>` factory).
+        let child_pids: Vec<Pid> = self.children.values().map(|c| c.pid).collect();
+        for pid in child_pids {
+            if self.system.is_actor_alive(pid) {
+                let _ = self.system.send_signal(pid, Signal::Stop).await;
+            }
+        }
     }
 }
 

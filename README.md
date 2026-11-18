@@ -36,7 +36,15 @@ async-trait = "0.1"
 use joerl::{Actor, ActorContext, ActorSystem, Message};
 use async_trait::async_trait;
 
-// Define your actor
+// Define the message type. A real enum is the recommended idiom: it is
+// type-safe, and an unknown message becomes a compile error rather than a
+// silently ignored one.
+#[derive(Debug)]
+enum CounterMsg {
+    Increment,
+    Get,
+}
+
 struct Counter {
     count: i32,
 }
@@ -44,14 +52,17 @@ struct Counter {
 #[async_trait]
 impl Actor for Counter {
     async fn handle_message(&mut self, msg: Message, _ctx: &mut ActorContext) {
-        if let Some(cmd) = msg.downcast_ref::<&str>() {
-            match *cmd {
-                "increment" => {
+        match msg.downcast::<CounterMsg>() {
+            Ok(cmd) => match *cmd {
+                CounterMsg::Increment => {
                     self.count += 1;
                     println!("Count: {}", self.count);
-                },
-                "get" => println!("Current count: {}", self.count),
-                _ => {}
+                }
+                CounterMsg::Get => println!("Current count: {}", self.count),
+            },
+            Err(other) => {
+                // Never drop a message silently: log what was not understood.
+                eprintln!("Counter: unexpected message {other:?}");
             }
         }
     }
@@ -62,9 +73,9 @@ async fn main() {
     let system = ActorSystem::new();
     let counter = system.spawn(Counter { count: 0 });
     
-    counter.send(Box::new("increment")).await.unwrap();
-    counter.send(Box::new("increment")).await.unwrap();
-    counter.send(Box::new("get")).await.unwrap();
+    counter.send(Box::new(CounterMsg::Increment)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Increment)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Get)).await.unwrap();
     
     // Give actors time to process
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

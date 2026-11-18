@@ -5,6 +5,18 @@
 use async_trait::async_trait;
 use joerl::{Actor, ActorContext, ActorSystem, Message};
 
+/// Messages understood by [`Counter`].
+///
+/// A real enum is the recommended idiom: an unknown message is a compile error
+/// at the send site rather than a silently ignored `Box<dyn Any>`.
+#[derive(Debug)]
+enum CounterMsg {
+    Increment,
+    Decrement,
+    Get,
+    Stop,
+}
+
 struct Counter {
     count: i32,
 }
@@ -16,26 +28,27 @@ impl Actor for Counter {
     }
 
     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
-        if let Some(cmd) = msg.downcast_ref::<&str>() {
-            match *cmd {
-                "increment" => {
+        match msg.downcast::<CounterMsg>() {
+            Ok(cmd) => match *cmd {
+                CounterMsg::Increment => {
                     self.count += 1;
                     println!("[{}] Count incremented to: {}", ctx.pid(), self.count);
                 }
-                "decrement" => {
+                CounterMsg::Decrement => {
                     self.count -= 1;
                     println!("[{}] Count decremented to: {}", ctx.pid(), self.count);
                 }
-                "get" => {
+                CounterMsg::Get => {
                     println!("[{}] Current count: {}", ctx.pid(), self.count);
                 }
-                "stop" => {
+                CounterMsg::Stop => {
                     println!("[{}] Stopping counter", ctx.pid());
                     ctx.stop(joerl::ExitReason::Normal);
                 }
-                _ => {
-                    println!("[{}] Unknown command: {}", ctx.pid(), cmd);
-                }
+            },
+            Err(other) => {
+                // Never drop a message silently.
+                println!("[{}] Unexpected message: {other:?}", ctx.pid());
             }
         }
     }
@@ -53,13 +66,13 @@ async fn main() {
     let counter = system.spawn(Counter { count: 0 });
 
     // Send some messages
-    counter.send(Box::new("increment")).await.unwrap();
-    counter.send(Box::new("increment")).await.unwrap();
-    counter.send(Box::new("increment")).await.unwrap();
-    counter.send(Box::new("get")).await.unwrap();
-    counter.send(Box::new("decrement")).await.unwrap();
-    counter.send(Box::new("get")).await.unwrap();
-    counter.send(Box::new("stop")).await.unwrap();
+    counter.send(Box::new(CounterMsg::Increment)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Increment)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Increment)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Get)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Decrement)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Get)).await.unwrap();
+    counter.send(Box::new(CounterMsg::Stop)).await.unwrap();
 
     // Wait for actor to process messages
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

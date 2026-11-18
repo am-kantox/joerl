@@ -19,7 +19,15 @@
 //! use joerl::{Actor, ActorContext, ActorSystem, Message};
 //! use async_trait::async_trait;
 //!
-//! // Define your actor
+//! // Define the message type. A real enum is the recommended idiom: it is
+//! // type-safe, and it makes an unknown message a compile error rather than a
+//! // silently ignored one.
+//! #[derive(Debug)]
+//! enum CounterMsg {
+//!     Increment,
+//!     Get,
+//! }
+//!
 //! struct Counter {
 //!     count: i32,
 //! }
@@ -30,25 +38,27 @@
 //!         println!("Counter started with pid {}", ctx.pid());
 //!     }
 //!
-//!     async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
-//!         if let Some(cmd) = msg.downcast_ref::<&str>() {
-//!             match *cmd {
-//!                 "increment" => self.count += 1,
-//!                 "get" => println!("Count: {}", self.count),
-//!                 _ => {}
+//!     async fn handle_message(&mut self, msg: Message, _ctx: &mut ActorContext) {
+//!         match msg.downcast::<CounterMsg>() {
+//!             Ok(cmd) => match *cmd {
+//!                 CounterMsg::Increment => self.count += 1,
+//!                 CounterMsg::Get => println!("Count: {}", self.count),
+//!             },
+//!             Err(other) => {
+//!                 // Never drop a message silently: log what was not understood.
+//!                 eprintln!("Counter: unexpected message {other:?}");
 //!             }
 //!         }
 //!     }
 //! }
 //!
-//! #[tokio::main]
-//! async fn main() {
-//!     let system = ActorSystem::new();
-//!     let counter = system.spawn(Counter { count: 0 });
-//!     
-//!     counter.send(Box::new("increment")).await.unwrap();
-//!     counter.send(Box::new("get")).await.unwrap();
-//! }
+//! # tokio_test::block_on(async {
+//! let system = ActorSystem::new();
+//! let counter = system.spawn(Counter { count: 0 });
+//!
+//! counter.send(Box::new(CounterMsg::Increment)).await.unwrap();
+//! counter.send(Box::new(CounterMsg::Get)).await.unwrap();
+//! # });
 //! ```
 //!
 //! ## Erlang Terminology Mapping
@@ -91,6 +101,12 @@
 //! See the `panic_handling` example for a comprehensive demonstration.
 
 /* content of the module */
+// `#[async_trait]` expands trait methods into `Pin<Box<dyn Future>>`, which is
+// already `#[must_use]`; the macro then adds its own `#[must_use]`, tripping
+// `clippy::double_must_use` at every async trait definition. Nothing in this
+// crate can fix that from the call site, so the lint is allowed crate-wide.
+#![allow(clippy::double_must_use)]
+
 pub mod actor;
 pub mod distributed;
 pub mod epmd;
@@ -106,6 +122,11 @@ pub mod scheduler;
 pub mod serialization;
 pub mod supervisor;
 pub mod system;
+// Every telemetry entry point keeps its full parameter list in both builds so
+// call sites stay identical; the `#[cfg(not(feature = "telemetry"))]` bodies are
+// no-ops, which leaves those parameters unused. Allow that at the module level
+// instead of annotating ~40 functions.
+#[cfg_attr(not(feature = "telemetry"), allow(unused_variables, dead_code))]
 pub mod telemetry;
 
 // Re-export commonly used types

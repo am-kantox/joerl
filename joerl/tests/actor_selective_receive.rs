@@ -407,3 +407,86 @@ async fn test_pending_queue_with_signals() {
 
     assert!(*got_message.lock().await);
 }
+
+/// A signal that arrives while an actor is parked in a *blocking* selective
+/// receive must not be stranded in the pending queue.
+///
+/// Regression test: `recv_matching` used to push signals to `pending`, where
+/// only a later plain `recv` could find them -- so an actor waiting on
+/// `ctx.receive(..)` (no timeout) never observed a shutdown signal.
+#[tokio::test]
+async fn test_signal_during_blocking_receive_is_not_stranded() {
+    struct WaitingActor {
+        entered: Arc<Mutex<bool>>,
+        exit_seen: Arc<Mutex<bool>>,
+    }
+
+    #[async_trait]
+    impl Actor for WaitingActor {
+        async fn started(&mut self, ctx: &mut ActorContext) {
+            ctx.trap_exit(true);
+        }
+
+        async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+            if msg.downcast_ref::<&str>().is_some() {
+                *self.entered.lock().await = true;
+
+                // Block indefinitely for a message that never arrives.
+                let _ = ctx
+                    .receive(|msg| msg.downcast_ref::<String>().cloned())
+                    .await;
+            }
+        }
+
+        async fn handle_signal(&mut self, signal: joerl::Signal, _ctx: &mut ActorContext) {
+            if matches!(signal, joerl::Signal::Exit { .. }) {
+                *self.exit_seen.lock().await = true;
+            }
+        }
+    }
+
+    let system = Arc::new(ActorSystem::new());
+    let entered = Arc::new(Mutex::new(false));
+    let exit_seen = Arc::new(Mutex::new(false));
+
+    let waiter = system.spawn(WaitingActor {
+        entered: Arc::clone(&entered),
+        exit_seen: Arc::clone(&exit_seen),
+    });
+
+    // A separate actor we will kill, to produce an EXIT signal.
+    struct Victim;
+
+    #[async_trait]
+    impl Actor for Victim {
+        async fn handle_message(&mut self, msg: Message, ctx: &mut ActorContext) {
+            if msg.downcast_ref::<&str>() == Some(&"die") {
+                ctx.stop(joerl::ExitReason::Panic("killed".to_string()));
+            }
+        }
+    }
+
+    let victim = system.spawn(Victim);
+    system
+        .link(waiter.pid(), victim.pid())
+        .expect("link should succeed");
+
+    // Put the waiter into a blocking selective receive.
+    waiter.send(Box::new("wait")).await.expect("send");
+    for _ in 0..50 {
+        if *entered.lock().await {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(*entered.lock().await, "actor should be in receive");
+
+    // Kill the linked actor: the EXIT signal lands while we are parked.
+    victim.send(Box::new("die")).await.expect("send");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert!(
+        *exit_seen.lock().await,
+        "EXIT signal must not be stranded in the pending queue"
+    );
+}

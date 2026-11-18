@@ -109,6 +109,15 @@ impl Fsm {
                         ));
                     }
                 }
+            } else {
+                // A non-empty, non-comment line without `-->` is almost always a
+                // typo (e.g. `locked -> unlocked`). Silently skipping it would
+                // yield a state machine that is missing a transition, with no
+                // diagnostic pointing at the diagram.
+                return Err(Error::new(
+                    lit.span(),
+                    format!("Unrecognized FSM line (expected `-->`): {}", line),
+                ));
             }
         }
 
@@ -324,6 +333,24 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("no initial state"));
     }
 
+    #[test]
+    fn test_error_unrecognized_line() {
+        // A missing `>` in the arrow used to be skipped silently, producing an
+        // FSM that was quietly missing a transition.
+        let lit: LitStr = parse_quote! {
+            r#"
+            [*] --> locked
+            locked -> unlocked
+            "#
+        };
+
+        let result = Fsm::parse(&lit);
+        let err = result.expect_err("a line without `-->` must be rejected");
+        assert!(
+            err.to_string().contains("Unrecognized FSM line"),
+            "unexpected error: {err}"
+        );
+    }
     #[test]
     fn test_error_empty_fsm() {
         let lit: LitStr = parse_quote! {

@@ -133,7 +133,15 @@ use async_trait::async_trait;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::oneshot;
+
+/// Maximum time a [`GenServerRef::call`] waits for a reply.
+///
+/// Mirrors Erlang's default `gen_server:call/2` timeout of 5 seconds. A server
+/// that never replies produces [`ActorError::Timeout`] instead of hanging the
+/// caller forever.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Response from `handle_call` - can be immediate or deferred.
 ///
@@ -255,7 +263,11 @@ impl<T> ReplyHandle<T> {
 impl<T> Drop for ReplyHandle<T> {
     fn drop(&mut self) {
         if self.reply_tx.is_some() {
-            tracing::warn!("ReplyHandle dropped without calling reply() - caller will timeout");
+            tracing::warn!(
+                "ReplyHandle dropped without calling reply(); \
+                 the caller will receive ActorError::Timeout after {:?}",
+                CALL_TIMEOUT
+            );
         }
     }
 }
@@ -397,12 +409,13 @@ impl<'a, G: GenServer> GenServerContext<'a, G> {
     ///
     /// # Panics
     ///
-    /// Panics if called outside of a `handle_call` context or if the
-    /// reply handle has already been taken.
+    /// Panics if the reply handle has already been taken (including when called
+    /// outside of `handle_call`, where no handle is ever installed).
     pub fn reply_handle(&mut self) -> ReplyHandle<G::CallReply> {
-        self.reply_handle
-            .take()
-            .expect("reply_handle() called outside handle_call or already taken")
+        self.reply_handle.take().expect(
+            "reply_handle() has no handle available: it was already taken, \
+             or this is not a handle_call context",
+        )
     }
 
     /// Looks up a process by name.
@@ -682,11 +695,19 @@ impl<G: GenServer> GenServerRef<G> {
         self.pid
     }
 
+    /// The server's type name, used as a telemetry label.
+    fn server_type(&self) -> &'static str {
+        actor_type_name::<G>()
+    }
     /// Make a synchronous call to the server.
     ///
     /// This sends a request and waits for a response.
     ///
     /// In Erlang: `gen_server:call/2`
+    ///
+    /// The wait is bounded by [`CALL_TIMEOUT`]; a server that never replies
+    /// (for example because it dropped its [`ReplyHandle`]) yields
+    /// [`ActorError::Timeout`] rather than hanging the caller forever.
     pub async fn call(&self, request: G::Call) -> Result<G::CallReply> {
         let (tx, rx) = oneshot::channel();
 
@@ -697,7 +718,14 @@ impl<G: GenServer> GenServerRef<G> {
 
         self.system.send(self.pid, Box::new(msg)).await?;
 
-        rx.await.map_err(|_| ActorError::ActorNotFound(self.pid))
+        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(_)) => Err(ActorError::ActorNotFound(self.pid)),
+            Err(_) => {
+                GenServerMetrics::call_timeout(self.server_type());
+                Err(ActorError::Timeout)
+            }
+        }
     }
 
     /// Send an asynchronous cast to the server.
